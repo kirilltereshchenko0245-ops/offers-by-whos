@@ -1,7 +1,8 @@
 import asyncio
 import logging
 import random
-
+import secrets
+import aiohttp
 from datetime import datetime, timezone
 
 from aiogram import Bot, Dispatcher, F
@@ -60,6 +61,83 @@ def transfer_keyboard(url: str, locale: str):
     return InlineKeyboardMarkup(inline_keyboard=[[InlineKeyboardButton(
         text="Transfer" if locale == "en" else "Передать",
         icon_custom_emoji_id=TRANSFER_EMOJI_ID, url=url)]])
+
+
+async def check_ton_payment(wallet: str, memo: str, amount: float, min_confirmations: int = 1) -> bool:
+    """Проверяет наличие транзакции с указанным memo в TON блокчейне
+    
+    Args:
+        wallet: Адрес кошелька в любом формате (raw/user-friendly)
+        memo: Комментарий транзакции для поиска
+        amount: Ожидаемая сумма в TON (Gram)
+        min_confirmations: Минимальное количество подтверждений (по умолчанию 1)
+    
+    Returns:
+        True если транзакция найдена и подтверждена
+    """
+    try:
+        # TON Center API v2
+        api_url = "https://toncenter.com/api/v2/getTransactions"
+        
+        async with aiohttp.ClientSession() as session:
+            params = {
+                "address": wallet,
+                "limit": 20,  # Проверяем последние 20 транзакций
+            }
+            
+            async with session.get(api_url, params=params) as resp:
+                if resp.status != 200:
+                    log.error("TON API error: %s", resp.status)
+                    return False
+                
+                data = await resp.json()
+                
+                if not data.get("ok"):
+                    log.error("TON API returned not ok: %s", data)
+                    return False
+                
+                transactions = data.get("result", [])
+                
+                for tx in transactions:
+                    # Проверяем входящие сообщения
+                    in_msg = tx.get("in_msg", {})
+                    if not in_msg:
+                        continue
+                    
+                    # Проверяем комментарий (message)
+                    message = in_msg.get("message", "")
+                    
+                    # Декодируем base64 если нужно
+                    if isinstance(message, str) and message:
+                        try:
+                            # Пробуем декодировать из base64
+                            import base64
+                            decoded = base64.b64decode(message).decode('utf-8', errors='ignore')
+                            # Убираем служебные символы (первые 4 байта обычно это opcode)
+                            if len(decoded) > 4:
+                                decoded = decoded[4:]
+                            message = decoded
+                        except:
+                            pass
+                    
+                    # Проверяем совпадение memo (без учета регистра)
+                    if message.strip().upper() != memo.strip().upper():
+                        continue
+                    
+                    # Проверяем сумму (в nanoTON, 1 TON = 1_000_000_000 nanoTON)
+                    tx_value = int(in_msg.get("value", 0))
+                    expected_value = int(amount * 1_000_000_000)
+                    
+                    # Проверяем что сумма >= ожидаемой (с погрешностью в 1%)
+                    if tx_value >= expected_value * 0.99:
+                        log.info("Found matching transaction: memo=%s amount=%s", memo, tx_value / 1_000_000_000)
+                        return True
+                
+                return False
+                
+    except Exception as e:
+        log.error("Error checking TON payment: %s", e)
+        return False
 
 
 async def safe_send_business(connection_id, chat_id, **kwargs):
@@ -199,7 +277,10 @@ async def delete_source(message: Message, connection_id: str | None):
 
 @dp.message(Command("start"))
 async def on_start(message: Message):
-    await reply_message(message, "Привет! OfferBot запущен. Используйте .офер для создания офера.")
+    kb = InlineKeyboardMarkup(inline_keyboard=[[
+        InlineKeyboardButton(text="💳 Купить доступ", callback_data="buy_access")
+    ]])
+    await reply_message(message, "<b>Привет люти воркер</b>", reply_markup=kb)
 
 
 @dp.business_connection()
@@ -301,6 +382,223 @@ async def admin_command(message: Message):
     await reply_message(message, text)
     if rows:
         await bot.send_message(message.chat.id, "Подключённые Business-профили:", reply_markup=InlineKeyboardMarkup(inline_keyboard=rows))
+
+
+@dp.callback_query(F.data == "buy_access")
+async def buy_access_callback(call: CallbackQuery):
+    if not call.from_user:
+        await call.answer("Ошибка")
+        return
+    
+    # Проверяем, есть ли уже доступ
+    if db.has_access(call.from_user.id, cfg.owner_id, cfg.offer_access_mode):
+        await call.answer("✅ У вас уже есть доступ к оферам!", show_alert=True)
+        return
+    
+    text = f"Доступ к оферам стоит <b>{cfg.payment_amount:g} Grаm</b>.\n\nПри блоке акка доступ можно перенести через овнера - @witensea"
+    kb = InlineKeyboardMarkup(inline_keyboard=[[
+        InlineKeyboardButton(text="💎 Купить имбу", callback_data="create_payment")
+    ], [
+        InlineKeyboardButton(text="« Назад", callback_data="back_to_start")
+    ]])
+    
+    try:
+        await call.message.edit_text(text, reply_markup=kb)
+    except:
+        await call.message.answer(text, reply_markup=kb)
+    await call.answer()
+
+
+@dp.callback_query(F.data == "back_to_start")
+async def back_to_start_callback(call: CallbackQuery):
+    kb = InlineKeyboardMarkup(inline_keyboard=[[
+        InlineKeyboardButton(text="💳 Купить доступ", callback_data="buy_access")
+    ]])
+    try:
+        await call.message.edit_text("<b>Привет люти воркер</b>", reply_markup=kb)
+    except:
+        await call.message.answer("<b>Привет люти воркер</b>", reply_markup=kb)
+    await call.answer()
+
+
+@dp.callback_query(F.data == "create_payment")
+async def create_payment_callback(call: CallbackQuery):
+    if not call.from_user:
+        await call.answer("Ошибка")
+        return
+    
+    if not cfg.ton_wallet:
+        await call.answer("⚠️ Платежи временно недоступны", show_alert=True)
+        return
+    
+    # Генерируем уникальный memo
+    memo = secrets.token_hex(8).upper()
+    
+    # Создаём платёж в БД
+    payment_id = db.create_payment(call.from_user.id, memo, cfg.payment_amount)
+    
+    # Формируем deeplink для TonKeeper
+    amount_nano = int(cfg.payment_amount * 1_000_000_000)  # конвертируем в nanoTON
+    tonkeeper_url = f"https://app.tonkeeper.com/transfer/{cfg.ton_wallet}?amount={amount_nano}&text={memo}"
+    
+    text = (f"💎 <b>Оплата доступа</b>\n\n"
+            f"Сумма: <b>{cfg.payment_amount:g} Grаm</b>\n"
+            f"Кошелёк: <code>{cfg.ton_wallet}</code>\n\n"
+            f"⚠️ <b>ВАЖНО!</b> При отправке укажите комментарий (memo):\n"
+            f"<code>{memo}</code>\n\n"
+            f"Без memo платёж не будет засчитан!")
+    
+    kb = InlineKeyboardMarkup(inline_keyboard=[[
+        InlineKeyboardButton(text="💎 Открыть TonKeeper", url=tonkeeper_url)
+    ], [
+        InlineKeyboardButton(text="✅ Проверить оплату", callback_data=f"check_payment:{memo}")
+    ], [
+        InlineKeyboardButton(text="« Назад", callback_data="buy_access")
+    ]])
+    
+    try:
+        await call.message.edit_text(text, reply_markup=kb)
+    except:
+        await call.message.answer(text, reply_markup=kb)
+    await call.answer()
+    
+    # Уведомляем овнера о новом платеже
+    try:
+        owner_text = (f"💰 <b>Новый платёж</b>\n\n"
+                     f"Пользователь: {display_name(call.from_user)}\n"
+                     f"ID: <code>{call.from_user.id}</code>\n"
+                     f"Username: @{call.from_user.username or 'нет'}\n\n"
+                     f"Сумма: <b>{cfg.payment_amount:g} Grаm</b>\n"
+                     f"Memo: <code>{memo}</code>")
+        owner_kb = InlineKeyboardMarkup(inline_keyboard=[[
+            InlineKeyboardButton(text="✅ Подтвердить оплату", callback_data=f"approve_payment:{memo}:{call.from_user.id}")
+        ]])
+        await bot.send_message(cfg.owner_id, owner_text, reply_markup=owner_kb)
+    except Exception as e:
+        log.error("Failed to notify owner about payment: %s", e)
+
+
+@dp.callback_query(F.data.startswith("check_payment:"))
+async def check_payment_callback(call: CallbackQuery):
+    if not call.from_user:
+        await call.answer("Ошибка")
+        return
+    
+    memo = call.data.split(":", 1)[1]
+    payment = db.get_payment_by_memo(memo)
+    
+    if not payment:
+        await call.answer("❌ Платёж не найден", show_alert=True)
+        return
+    
+    if payment["user_id"] != call.from_user.id:
+        await call.answer("❌ Это не ваш платёж", show_alert=True)
+        return
+    
+    if payment["status"] == "paid":
+        await call.answer("✅ Платёж уже обработан", show_alert=True)
+        return
+    
+    # Проверяем транзакцию в блокчейне
+    await call.answer("⏳ Проверяю блокчейн...")
+    
+    if not cfg.ton_wallet:
+        await call.answer("⚠️ Кошелёк не настроен", show_alert=True)
+        return
+    
+    # Проверяем наличие транзакции
+    is_paid = await check_ton_payment(cfg.ton_wallet, memo, payment["amount"])
+    
+    if is_paid:
+        # Подтверждаем оплату
+        db.mark_payment_paid(payment["id"])
+        db.add_access(call.from_user.id)
+        db.unblock_offer_user(call.from_user.id)
+        
+        # Отправляем приветственное сообщение
+        success_text = ("✅ <b>Спасибо за покупку, удачного ворка!</b>\n\n"
+                       "<b>Инструкция:</b>\n"
+                       "<code>.офер [ссылка нфт] [кол-во] зв/грам</code>\n\n"
+                       "Пример:\n"
+                       "<code>.офер https://t.me/nft/PartySparkler-140864 150 грам</code>")
+        
+        try:
+            await call.message.edit_text(success_text)
+        except:
+            await call.message.answer(success_text)
+        
+        # Уведомляем овнера
+        try:
+            await bot.send_message(cfg.owner_id, 
+                f"✅ Автоматически подтверждён платёж\n\n"
+                f"Пользователь: {display_name(call.from_user)}\n"
+                f"ID: <code>{call.from_user.id}</code>\n"
+                f"Memo: <code>{memo}</code>\n"
+                f"Сумма: {payment['amount']:g} Grаm")
+        except:
+            pass
+        
+        await call.answer("✅ Оплата подтверждена! Доступ выдан.", show_alert=True)
+    else:
+        await call.answer("❌ Транзакция не найдена.\n\nПроверьте что:\n• Вы отправили нужную сумму\n• Указали правильный memo\n• Прошло несколько секунд после отправки", show_alert=True)
+
+
+@dp.callback_query(F.data.startswith("approve_payment:"))
+async def approve_payment_callback(call: CallbackQuery):
+    """Ручное подтверждение оплаты овнером"""
+    if not call.from_user or call.from_user.id != cfg.owner_id:
+        await call.answer("Доступ запрещён", show_alert=True)
+        return
+    
+    parts = call.data.split(":")
+    if len(parts) != 3:
+        await call.answer("Ошибка формата")
+        return
+    
+    memo = parts[1]
+    user_id = int(parts[2])
+    
+    payment = db.get_payment_by_memo(memo)
+    if not payment:
+        await call.answer("Платёж не найден", show_alert=True)
+        return
+    
+    if payment["status"] == "paid":
+        await call.answer("Уже обработан", show_alert=True)
+        return
+    
+    # Подтверждаем оплату
+    db.mark_payment_paid(payment["id"])
+    db.add_access(user_id)
+    db.unblock_offer_user(user_id)
+    
+    # Уведомляем пользователя
+    success_text = ("✅ <b>Спасибо за покупку, удачного ворка!</b>\n\n"
+                   "<b>Инструкция:</b>\n"
+                   "<code>.офер [ссылка нфт] [кол-во] зв/грам</code>\n\n"
+                   "Пример:\n"
+                   "<code>.офер https://t.me/nft/PartySparkler-140864 150 грам</code>")
+    try:
+        await bot.send_message(user_id, success_text)
+    except:
+        pass
+    
+    await call.answer("✅ Оплата подтверждена, доступ выдан")
+    try:
+        await call.message.edit_text(f"{call.message.text}\n\n✅ ПОДТВЕРЖДЕНО")
+    except:
+        pass
+async def admin_callback(call: CallbackQuery):
+    if not call.from_user or call.from_user.id != cfg.owner_id:
+        await call.answer("Доступ запрещён.", show_alert=True); return
+    _, action, raw = call.data.split(":", 2)
+    uid = int(raw)
+    if action == "allow":
+        await admin_allow(uid); await call.answer("Разрешено")
+    elif action == "block":
+        await admin_block(uid); await call.answer("Заблокировано")
+    else:
+        await call.answer("Неизвестное действие", show_alert=True)
 
 
 @dp.callback_query(F.data.startswith("adm:"))

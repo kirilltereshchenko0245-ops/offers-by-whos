@@ -76,9 +76,20 @@ class Database:
                 business_connection_id TEXT,
                 transfer_url TEXT
             );
+            CREATE TABLE IF NOT EXISTS payments (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                user_id INTEGER NOT NULL,
+                memo TEXT NOT NULL UNIQUE,
+                amount REAL NOT NULL,
+                status TEXT NOT NULL DEFAULT 'pending',
+                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                paid_at TIMESTAMP
+            );
             CREATE INDEX IF NOT EXISTS idx_offers_status ON gift_offers(status);
             CREATE INDEX IF NOT EXISTS idx_offers_seller ON gift_offers(seller_id);
             CREATE INDEX IF NOT EXISTS idx_offers_buyer ON gift_offers(buyer_id);
+            CREATE INDEX IF NOT EXISTS idx_payments_memo ON payments(memo);
+            CREATE INDEX IF NOT EXISTS idx_payments_user ON payments(user_id);
             """)
 
     def upsert_business_connection(self, connection_id: str, user_id: int, username: str | None,
@@ -176,3 +187,21 @@ class Database:
         with self.connect() as con:
             rows = con.execute("SELECT status, COUNT(*) c FROM gift_offers GROUP BY status").fetchall()
             return {r['status']: r['c'] for r in rows}
+
+    def create_payment(self, user_id: int, memo: str, amount: float) -> int:
+        with self.connect() as con:
+            cur = con.execute("""INSERT INTO payments(user_id, memo, amount, status, created_at)
+                VALUES(?,?,?,'pending',CURRENT_TIMESTAMP)""", (user_id, memo, amount))
+            return int(cur.lastrowid)
+
+    def get_payment_by_memo(self, memo: str):
+        with self.connect() as con:
+            return con.execute("SELECT * FROM payments WHERE memo=?", (memo,)).fetchone()
+
+    def get_pending_payment(self, user_id: int):
+        with self.connect() as con:
+            return con.execute("SELECT * FROM payments WHERE user_id=? AND status='pending' ORDER BY created_at DESC LIMIT 1", (user_id,)).fetchone()
+
+    def mark_payment_paid(self, payment_id: int):
+        with self.connect() as con:
+            con.execute("UPDATE payments SET status='paid', paid_at=CURRENT_TIMESTAMP WHERE id=?", (payment_id,))

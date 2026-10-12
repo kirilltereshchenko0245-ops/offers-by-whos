@@ -19,6 +19,9 @@ class Config:
     offer_access_mode: str
     offer_always_allowed_ids: tuple[int, ...]
     offer_expire_hours: float = 5.9833333333  # 5ч 59м
+    ton_wallet: str = ""
+    payment_amount: float = 10.0  # Grаm
+    tonkeeper_deeplink: str = "https://app.tonkeeper.com/transfer/{address}?amount={amount}&text={memo}"
 
 
 def load_config() -> Config:
@@ -55,4 +58,6 @@ def load_config() -> Config:
         offer_access_mode=mode,
         offer_always_allowed_ids=tuple(ids),
         offer_expire_hours=float(os.getenv("OFFER_EXPIRE_HOURS", "5.9833333333")),
+        ton_wallet=os.getenv("TON_WALLET", "").strip(),
+        payment_amount=float(os.getenv("PAYMENT_AMOUNT", "10.0")),
     )
