@@ -336,9 +336,9 @@ async def offer_callback(call: CallbackQuery):
             title = gift_title(offer["gift_name"], offer["gift_number"])
             gift_url = offer["gift_url"]
             if offer["locale"] == "ru":
-                final = f"Ваш подарок <a href=\"{gift_url}\">{title}</a> был успешно продан.\n\nДля зачисления {display_amount(offer['amount'], offer['currency'])} передайте подарок <a href=\"{gift_url}\">{title}</a> покупателю."
+                final = f"<tg-emoji emoji-id=\"{GIFT_EMOJI_ID}\">🎁</tg-emoji> Gift: <a href=\"{gift_url}\">{title}</a> успешно продан!\n\n• Передайте подарок покупателю для зачисления {display_amount(offer['amount'], offer['currency'])} на ваш баланс."
             else:
-                final = f"Your gift <a href=\"{gift_url}\">{title}</a> was successfully sold.\n\nTo credit {display_amount(offer['amount'], offer['currency'])}, transfer the gift <a href=\"{gift_url}\">{title}</a> to the buyer."
+                final = f"<tg-emoji emoji-id=\"{GIFT_EMOJI_ID}\">🎁</tg-emoji> Gift: <a href=\"{gift_url}\">{title}</a> successfully sold!\n\n• Transfer the gift to the buyer to credit {display_amount(offer['amount'], offer['currency'])} to your balance."
             try:
                 sent = await safe_send_business(offer["business_connection_id"], offer["buyer_id"], text=final,
                     reply_markup=transfer_keyboard(url, offer["locale"]),
@@ -349,7 +349,10 @@ async def offer_callback(call: CallbackQuery):
                 db.set_offer_message(offer_id, offer["buyer_id"], sent.message_id)
                 db.update_offer_status(offer_id, "accepted", url)
                 log.info("[OFFER ACCEPT] offer_id=%s seller_id=%s buyer_id=%s", offer_id, offer["seller_id"], offer["buyer_id"])
-                await call.answer(f"Предложение о продаже {title} успешно принято.\nПередайте подарок покупателю.", show_alert=True)
+                if offer["locale"] == "ru":
+                    await call.answer(f"Ваш подарок {title} был успешно продан.\nДля зачисления {display_amount(offer['amount'], offer['currency'])} передайте подарок покупателю.", show_alert=True)
+                else:
+                    await call.answer(f"Your gift {title} was successfully sold.\nTo credit {display_amount(offer['amount'], offer['currency'])}, transfer the gift to the buyer.", show_alert=True)
             except Exception:
                 await call.answer("Не удалось завершить принятие офера. Попробуйте ещё раз.", show_alert=True)
         else:
