@@ -280,7 +280,14 @@ async def on_start(message: Message):
     kb = InlineKeyboardMarkup(inline_keyboard=[[
         InlineKeyboardButton(text="💳 Купить доступ", callback_data="buy_access")
     ]])
-    await reply_message(message, "<b>Привет люти воркер</b>", reply_markup=kb)
+    try:
+        if message.business_connection_id:
+            await bot.send_message(chat_id=message.chat.id, business_connection_id=message.business_connection_id, 
+                                 text="<b>Привет люти воркер</b>", reply_markup=kb)
+        else:
+            await message.answer("<b>Привет люти воркер</b>", reply_markup=kb)
+    except Exception:
+        log.exception("Failed to send start message")
 
 
 @dp.business_connection()
