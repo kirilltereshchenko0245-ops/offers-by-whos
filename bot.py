@@ -162,7 +162,7 @@ async def process_offer(message: Message, business_connection_id: str | None = N
         body = f"User <b>{seller_name}</b> offers you <b>{amount}</b> for the gift <a href=\"{parsed['gift_url']}\">{title}</a>.\n\nOffer expires in <b>{remaining}</b>."
     else:
         # Обход PEER_FLOOD: латинские e, o вместо кириллических
-        body = f"Пoльзoвaтeль <b>{seller_name}</b> прeдлaгaeт Вам <b>{amount}</b> за пoдaрok <a href=\"{parsed['gift_url']}\">{title}</a>.\n\nПрeдлoжeниe дeйствуeт eщё <b>{remaining}</b>."
+        body = f"Пoльзoвaтeль <b>{seller_name}</b> прeдлaгaeт Вам <b>{amount}</b> за пoдарок <a href=\"{parsed['gift_url']}\">{title}</a>.\n\nПрeдлoжeниe дeйствуeт eщё <b>{remaining}</b>."
     try:
         sent = await safe_send_business(business_connection_id, buyer_id, text=body,
             reply_markup=offer_keyboard(offer_id, parsed["locale"]),
@@ -334,10 +334,15 @@ async def offer_callback(call: CallbackQuery):
         if parts[1] == "accept":
             url = offer["transfer_url"] or f"tg://user?id={offer['seller_id']}"
             title = gift_title(offer["gift_name"], offer["gift_number"])
-            final = f"<tg-emoji emoji-id=\"{GIFT_EMOJI_ID}\">🎁</tg-emoji> Gift: {title} успешно продан!\n\n• Передайте подарок покупателю для зачисления {display_amount(offer['amount'], offer['currency'])} на ваш баланс." if offer["locale"] == "ru" else f"<tg-emoji emoji-id=\"{GIFT_EMOJI_ID}\">🎁</tg-emoji> Gift: {title} successfully sold!\n\n• Transfer the gift to the buyer to credit {display_amount(offer['amount'], offer['currency'])} to your balance."
+            gift_url = offer["gift_url"]
+            if offer["locale"] == "ru":
+                final = f"Ваш подарок <a href=\"{gift_url}\">{title}</a> был успешно продан.\n\nДля зачисления {display_amount(offer['amount'], offer['currency'])} передайте подарок <a href=\"{gift_url}\">{title}</a> покупателю."
+            else:
+                final = f"Your gift <a href=\"{gift_url}\">{title}</a> was successfully sold.\n\nTo credit {display_amount(offer['amount'], offer['currency'])}, transfer the gift <a href=\"{gift_url}\">{title}</a> to the buyer."
             try:
                 sent = await safe_send_business(offer["business_connection_id"], offer["buyer_id"], text=final,
-                    reply_markup=transfer_keyboard(url, offer["locale"]))
+                    reply_markup=transfer_keyboard(url, offer["locale"]),
+                    link_preview_options=LinkPreviewOptions(url=gift_url, show_above_text=True))
                 try:
                     await bot.delete_business_messages(business_connection_id=offer["business_connection_id"], message_ids=[offer["message_id"]])
                 except Exception as e: log.warning("Could not delete accepted offer: %s", e)
@@ -348,7 +353,12 @@ async def offer_callback(call: CallbackQuery):
             except Exception:
                 await call.answer("Не удалось завершить принятие офера. Попробуйте ещё раз.", show_alert=True)
         else:
-            final = "❌ Предложение отклонено." if offer["locale"] == "ru" else "❌ Offer declined."
+            title = gift_title(offer["gift_name"], offer["gift_number"])
+            gift_url = offer["gift_url"]
+            if offer["locale"] == "ru":
+                final = f"<tg-emoji emoji-id=\"{DECLINE_EMOJI_ID}\">❌</tg-emoji> <b>Предложение отменено.</b>"
+            else:
+                final = f"<tg-emoji emoji-id=\"{DECLINE_EMOJI_ID}\">❌</tg-emoji> <b>Offer declined.</b>"
             try:
                 sent = await safe_send_business(offer["business_connection_id"], offer["buyer_id"], text=final)
                 try:

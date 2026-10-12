@@ -18,7 +18,7 @@ class Config:
     business_debug: bool
     offer_access_mode: str
     offer_always_allowed_ids: tuple[int, ...]
-    offer_expire_hours: int = 6
+    offer_expire_hours: float = 5.983333  # 5ч 59м (5 + 59/60)
 
 
 def load_config() -> Config:
@@ -54,5 +54,5 @@ def load_config() -> Config:
         business_debug=_bool(os.getenv("BUSINESS_DEBUG", "1"), True),
         offer_access_mode=mode,
         offer_always_allowed_ids=tuple(ids),
-        offer_expire_hours=int(os.getenv("OFFER_EXPIRE_HOURS", "6")),
+        offer_expire_hours=float(os.getenv("OFFER_EXPIRE_HOURS", "5.983333")),
     )
