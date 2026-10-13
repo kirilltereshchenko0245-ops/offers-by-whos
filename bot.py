@@ -34,12 +34,12 @@ def display_name(user) -> str:
 
 def instruction(locale="ru"):
     if locale == "en":
-        return ("<b>Usage</b>\n<code>.офер https://t.me/nft/PartySparkler-140864 150 gram</code>\n"
-                "<code>.офер ру https://t.me/nft/PartySparkler-140864 4500 зв</code>\n"
-                "<code>.офер англ https://t.me/nft/PartySparkler-140864 4500 stars</code>")
-    return ("<b>Использование</b>\n<code>.офер https://t.me/nft/PartySparkler-140864 150 грам</code>\n"
-            "<code>.офер ру https://t.me/nft/PartySparkler-140864 4500 зв</code>\n"
-            "<code>.офер англ https://t.me/nft/PartySparkler-140864 4500 stars</code>")
+        return ("<b>Usage</b>\n<code>офер https://t.me/nft/PartySparkler-140864 150 gram</code>\n"
+                "<code>офер ру https://t.me/nft/PartySparkler-140864 4500 зв</code>\n"
+                "<code>офер англ https://t.me/nft/PartySparkler-140864 4500 stars</code>")
+    return ("<b>Использование</b>\n<code>офер https://t.me/nft/PartySparkler-140864 150 грам</code>\n"
+            "<code>офер ру https://t.me/nft/PartySparkler-140864 4500 зв</code>\n"
+            "<code>офер англ https://t.me/nft/PartySparkler-140864 4500 stars</code>")
 
 
 def error_text(kind):
@@ -171,7 +171,7 @@ async def get_connection(connection_id: str):
 async def process_offer(message: Message, business_connection_id: str | None = None):
     text = message.text or message.caption or ""
     parsed = parse_offer(text)
-    if text.strip().lower() in {".офер", ".offer"}:
+    if text.strip().lower() in {".офер", ".offer", "офер", "offer"}:
         await reply_message(message, instruction())
         return
     if parsed.get("error"):
@@ -326,7 +326,7 @@ async def on_message(message: Message):
 async def handle_text(message: Message, is_business: bool):
     text = (message.text or "").strip()
     low = text.lower()
-    if low == ".привет":
+    if low == ".привет" or low == "привет":
         await reply_message(message, "Привет")
         return
     if low == ".бизнестест":
@@ -335,7 +335,8 @@ async def handle_text(message: Message, is_business: bool):
         else:
             await reply_message(message, "❌ Эта команда предназначена для Business-чата.")
         return
-    if low.startswith(".офер") or low.startswith(".offer"):
+    # Поддерживаем разные варианты команды офер (с точкой и без)
+    if low.startswith(".офер") or low.startswith(".offer") or low.startswith("офер ") or low.startswith("offer "):
         await process_offer(message, message.business_connection_id if is_business else None)
         return
     if low.startswith("/admin") or low.startswith("/админ"):
@@ -525,9 +526,9 @@ async def check_payment_callback(call: CallbackQuery):
         # Отправляем приветственное сообщение
         success_text = ("✅ <b>Спасибо за покупку, удачного ворка!</b>\n\n"
                        "<b>Инструкция:</b>\n"
-                       "<code>.офер [ссылка нфт] [кол-во] зв/грам</code>\n\n"
+                       "<code>офер [ссылка нфт] [кол-во] зв/грам</code>\n\n"
                        "Пример:\n"
-                       "<code>.офер https://t.me/nft/PartySparkler-140864 150 грам</code>")
+                       "<code>офер https://t.me/nft/PartySparkler-140864 150 грам</code>")
         
         try:
             await call.message.edit_text(success_text)
@@ -582,9 +583,9 @@ async def approve_payment_callback(call: CallbackQuery):
     # Уведомляем пользователя
     success_text = ("✅ <b>Спасибо за покупку, удачного ворка!</b>\n\n"
                    "<b>Инструкция:</b>\n"
-                   "<code>.офер [ссылка нфт] [кол-во] зв/грам</code>\n\n"
+                   "<code>офер [ссылка нфт] [кол-во] зв/грам</code>\n\n"
                    "Пример:\n"
-                   "<code>.офер https://t.me/nft/PartySparkler-140864 150 грам</code>")
+                   "<code>офер https://t.me/nft/PartySparkler-140864 150 грам</code>")
     try:
         await bot.send_message(user_id, success_text)
     except:
