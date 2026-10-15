@@ -53,7 +53,7 @@ def display_amount(amount: float, currency: str) -> str:
     if currency == "gram":
         return f"{value} Grаm"
     elif currency == "rub":
-        return f"{value} ₽"
+        return f"{value}₽"
     else:
         return f"{value} Stаrs"
 

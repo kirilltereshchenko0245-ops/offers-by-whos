@@ -72,8 +72,10 @@ class Database:
                 created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
                 expires_at TIMESTAMP,
                 accepted_at TIMESTAMP,
-                transfer_confirmed INTEGER DEFAULT 0,
-                transfer_confirmed_at TIMESTAMP,
+                seller_confirmed INTEGER DEFAULT 0,
+                seller_confirmed_at TIMESTAMP,
+                buyer_confirmed INTEGER DEFAULT 0,
+                buyer_confirmed_at TIMESTAMP,
                 message_chat_id INTEGER,
                 message_id INTEGER,
                 business_connection_id TEXT,
@@ -114,6 +116,12 @@ class Database:
         with self.connect() as con:
             return con.execute("""SELECT * FROM offer_business_connections
                 WHERE user_id=? AND is_enabled=1 ORDER BY updated_at DESC LIMIT 1""", (user_id,)).fetchone()
+
+    def get_user_id_by_username(self, username: str):
+        """Поиск user_id по username в подключениях"""
+        with self.connect() as con:
+            row = con.execute("SELECT user_id FROM offer_business_connections WHERE username=? ORDER BY updated_at DESC LIMIT 1", (username,)).fetchone()
+            return row["user_id"] if row else None
 
     def set_connection_blocked(self, connection_id: str, blocked: bool):
         with self.connect() as con:
@@ -186,8 +194,18 @@ class Database:
                 con.execute("UPDATE gift_offers SET status=?, transfer_url=COALESCE(?,transfer_url) WHERE id=?", (status, transfer_url, offer_id))
 
     def confirm_transfer(self, offer_id: int):
+        """Устаревший метод - заменён на confirm_seller и confirm_buyer"""
+        pass
+
+    def confirm_seller(self, offer_id: int):
+        """Продавец подтверждает что готов передать"""
         with self.connect() as con:
-            con.execute("UPDATE gift_offers SET transfer_confirmed=1, transfer_confirmed_at=CURRENT_TIMESTAMP WHERE id=?", (offer_id,))
+            con.execute("UPDATE gift_offers SET seller_confirmed=1, seller_confirmed_at=CURRENT_TIMESTAMP WHERE id=?", (offer_id,))
+
+    def confirm_buyer(self, offer_id: int):
+        """Покупатель подтверждает что получил"""
+        with self.connect() as con:
+            con.execute("UPDATE gift_offers SET buyer_confirmed=1, buyer_confirmed_at=CURRENT_TIMESTAMP WHERE id=?", (offer_id,))
 
     def list_connections(self):
         with self.connect() as con:
