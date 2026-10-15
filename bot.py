@@ -468,26 +468,35 @@ async def handle_text(message: Message, is_business: bool, state: FSMContext = N
         return
     
     if low.startswith("/stopbot ") and message.from_user and message.from_user.id == cfg.owner_id:
-        bot_id = int(text.split()[1])
-        success, msg = await bot_manager.stop_bot(bot_id)
-        await reply_message(message, f"{'✅' if success else '❌'} {msg}")
+        try:
+            bot_id = int(text.split()[1])
+            success, msg = await bot_manager.stop_bot(bot_id)
+            await reply_message(message, f"{'✅' if success else '❌'} {msg}")
+        except (ValueError, IndexError):
+            await reply_message(message, "❌ Использование: /stopbot [ID]")
         return
     
     if low.startswith("/startbot ") and message.from_user and message.from_user.id == cfg.owner_id:
-        bot_id = int(text.split()[1])
-        bot_data = db.get_client_bot(bot_id)
-        if bot_data:
-            success, msg = await bot_manager.start_bot(bot_id, bot_data["token"], bot_data["owner_id"])
-            await reply_message(message, f"{'✅' if success else '❌'} {msg}")
-        else:
-            await reply_message(message, "❌ Бот не найден")
+        try:
+            bot_id = int(text.split()[1])
+            bot_data = db.get_client_bot(bot_id)
+            if bot_data:
+                success, msg = await bot_manager.start_bot(bot_id, bot_data["token"], bot_data["owner_id"])
+                await reply_message(message, f"{'✅' if success else '❌'} {msg}")
+            else:
+                await reply_message(message, "❌ Бот не найден")
+        except (ValueError, IndexError):
+            await reply_message(message, "❌ Использование: /startbot [ID]")
         return
     
     if low.startswith("/deletebot ") and message.from_user and message.from_user.id == cfg.owner_id:
-        bot_id = int(text.split()[1])
-        await bot_manager.stop_bot(bot_id)
-        db.delete_client_bot(bot_id)
-        await reply_message(message, "✅ Бот удалён")
+        try:
+            bot_id = int(text.split()[1])
+            await bot_manager.stop_bot(bot_id)
+            db.delete_client_bot(bot_id)
+            await reply_message(message, "✅ Бот удалён")
+        except (ValueError, IndexError):
+            await reply_message(message, "❌ Использование: /deletebot [ID]")
         return
     
     if low == ".привет" or low == "привет":
@@ -502,6 +511,11 @@ async def handle_text(message: Message, is_business: bool, state: FSMContext = N
     # Поддерживаем команду "купить"
     if low.startswith("купить ") or low.startswith("buy "):
         await process_offer(message, message.business_connection_id if is_business else None)
+        return
+    
+    # Проверка на токен бота (прямая отправка без /addbot)
+    if ":" in text and len(text) > 40 and text.split(":")[0].isdigit():
+        await handle_bot_token_direct(message)
         return
     if low.startswith("/admin") or low.startswith("/админ"):
         await admin_command(message)
@@ -1191,9 +1205,10 @@ async def start_add_bot(message: Message, state: FSMContext):
     text = ("🤖 <b>Добавление бота</b>\n\n"
            "1. Создайте нового бота через @BotFather\n"
            "2. Скопируйте токен бота\n"
-           "3. Отправьте его мне\n\n"
+           "3. Отправьте его сюда (просто вставьте токен)\n\n"
            "Токен выглядит так:\n"
            "<code>1234567890:ABCdefGHIjklMNOpqrsTUVwxyz</code>\n\n"
+           "💡 <b>Совет:</b> Просто отправьте токен в любой момент, команда /addbot не обязательна!\n\n"
            "Отправьте /cancel для отмены.")
     
     await reply_message(message, text)
@@ -1257,6 +1272,66 @@ async def process_bot_token(message: Message, state: FSMContext):
         await reply_message(message, f"❌ Ошибка проверки токена: {str(e)[:100]}")
     
     await state.clear()
+
+
+# Обработчик для прямой отправки токена (без FSM)
+async def handle_bot_token_direct(message: Message):
+    """Обработка токена без FSM - для Business чатов"""
+    if not message.from_user or not message.text:
+        return
+    
+    token = message.text.strip()
+    
+    # Проверка что это похоже на токен
+    if not ":" in token or len(token) < 40 or not token.split(":")[0].isdigit():
+        return  # Не токен, пропускаем
+    
+    # Проверяем доступ
+    if not db.has_access(message.from_user.id, cfg.owner_id, cfg.offer_access_mode):
+        await reply_message(message, t("no_access", "ru"))
+        return
+    
+    # Проверяем лимит
+    bot_count = db.count_user_bots(message.from_user.id)
+    if bot_count >= 5:
+        await reply_message(message, "❌ Достигнут лимит ботов (максимум 5).")
+        return
+    
+    # Проверяем что токен не используется
+    existing = db.get_client_bot_by_token(token)
+    if existing:
+        await reply_message(message, "❌ Этот токен уже используется.")
+        return
+    
+    await reply_message(message, "⏳ Проверяю токен...")
+    
+    try:
+        test_bot = Bot(token, default=DefaultBotProperties(parse_mode=ParseMode.HTML))
+        me = await test_bot.get_me()
+        await test_bot.session.close()
+        
+        username = me.username
+        
+        # Сохраняем в БД
+        bot_id = db.create_client_bot(message.from_user.id, token, username)
+        
+        # Запускаем бота
+        success, msg = await bot_manager.start_bot(bot_id, token, message.from_user.id)
+        
+        if success:
+            text = (f"✅ <b>Бот добавлен!</b>\n\n"
+                   f"@{username}\n"
+                   f"ID: <code>{bot_id}</code>\n\n"
+                   f"Подключите к нему Telegram Business и отправляйте:\n"
+                   f"<code>купить [ссылка нфт] [цена] грам/зв/р</code>")
+            await reply_message(message, text)
+        else:
+            db.delete_client_bot(bot_id)
+            await reply_message(message, f"❌ Ошибка запуска: {msg}")
+        
+    except Exception as e:
+        log.error(f"Failed to add bot: {e}")
+        await reply_message(message, f"❌ Ошибка: {str(e)[:100]}")
 
 
 async def show_all_bots(message: Message):
