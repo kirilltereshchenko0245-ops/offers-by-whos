@@ -12,6 +12,7 @@ from aiogram.exceptions import TelegramBadRequest, TelegramForbiddenError, Teleg
 from aiogram.filters import Command
 from aiogram.fsm.context import FSMContext
 from aiogram.fsm.state import State, StatesGroup
+from aiogram.fsm.storage.memory import MemoryStorage
 from aiogram.types import (CallbackQuery, InlineKeyboardButton, InlineKeyboardMarkup,
                            LinkPreviewOptions, Message, BusinessConnection)
 
@@ -27,8 +28,9 @@ log = logging.getLogger("offerbot")
 
 cfg = load_config()
 db = Database(cfg.database_path)
+storage = MemoryStorage()
 bot = Bot(cfg.bot_token, default=DefaultBotProperties(parse_mode=ParseMode.HTML))
-dp = Dispatcher()
+dp = Dispatcher(storage=storage)
 offer_locks = {}
 bot_manager = BotManager(db, cfg)  # Менеджер клиентских ботов
 
@@ -1118,7 +1120,18 @@ async def show_my_bots(message: Message):
             InlineKeyboardButton(text="➕ Добавить бота", callback_data="add_bot")
         ]])
         
-        await reply_message(message, text)
+        try:
+            if message.business_connection_id:
+                await bot.send_message(
+                    chat_id=message.chat.id,
+                    business_connection_id=message.business_connection_id,
+                    text=text,
+                    reply_markup=kb
+                )
+            else:
+                await message.answer(text, reply_markup=kb)
+        except Exception as e:
+            log.exception("Failed to send mybots")
         return
     
     text = "📱 <b>Ваши боты</b>\n\n"
@@ -1141,7 +1154,19 @@ async def show_my_bots(message: Message):
     ])
     
     kb = InlineKeyboardMarkup(inline_keyboard=buttons)
-    await reply_message(message, text)
+    
+    try:
+        if message.business_connection_id:
+            await bot.send_message(
+                chat_id=message.chat.id,
+                business_connection_id=message.business_connection_id,
+                text=text,
+                reply_markup=kb
+            )
+        else:
+            await message.answer(text, reply_markup=kb)
+    except Exception as e:
+        log.exception("Failed to send mybots")
 
 
 async def start_add_bot(message: Message, state: FSMContext):
