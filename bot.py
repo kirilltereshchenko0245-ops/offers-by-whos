@@ -20,6 +20,7 @@ from database import Database
 from translations import t, get_user_locale
 from offer import (ACCEPT_EMOJI_ID, DECLINE_EMOJI_ID, GIFT_EMOJI_ID, TRANSFER_EMOJI_ID, CONFIRM_EMOJI_ID,
                    display_amount, format_remaining, gift_title, make_expiry, parse_offer)
+from bot_manager import BotManager
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
 log = logging.getLogger("offerbot")
@@ -29,6 +30,7 @@ db = Database(cfg.database_path)
 bot = Bot(cfg.bot_token, default=DefaultBotProperties(parse_mode=ParseMode.HTML))
 dp = Dispatcher()
 offer_locks = {}
+bot_manager = BotManager(db, cfg)  # Менеджер клиентских ботов
 
 # Константы для канала
 REQUIRED_CHANNEL_ID = -1004393569613
@@ -38,6 +40,11 @@ REQUIRED_CHANNEL_URL = "https://t.me/dodep222"
 # Состояния для рассылки
 class BroadcastStates(StatesGroup):
     waiting_for_message = State()
+
+
+# Состояния для добавления бота
+class AddBotStates(StatesGroup):
+    waiting_for_token = State()
 
 
 async def check_channel_subscription(user_id: int) -> bool:
@@ -72,6 +79,11 @@ def full_instruction():
         "<b>4. Настройка профиля передачи</b>\n"
         "<code>/transfer @username</code>\n"
         "Меняет профиль в кнопке \"Передать\"\n\n"
+        "<b>5. Свой бот</b>\n"
+        "Вы можете добавить своего бота:\n"
+        "<code>/mybots</code> — управление ботами\n"
+        "<code>/addbot</code> — добавить нового бота\n\n"
+        "Создайте бота через @BotFather, добавьте токен сюда, подключите к нему Business — всё работает!\n\n"
         "<blockquote>При заморозке аккаунта, напишите овнеру @witensea для переноса доступа.</blockquote>"
     )
 
@@ -434,6 +446,48 @@ async def handle_text(message: Message, is_business: bool, state: FSMContext = N
             await reply_message(message, "❌ State не доступен для рассылки")
         return
     
+    # Команды для управления ботами
+    if low == "/mybots" or low == "/мои_боты":
+        if message.from_user:
+            await show_my_bots(message)
+        return
+    
+    if low == "/addbot" or low == "/добавить_бота":
+        if message.from_user:
+            if state:
+                await start_add_bot(message, state)
+            else:
+                await reply_message(message, "❌ State не доступен")
+        return
+    
+    # Админские команды для управления всеми ботами
+    if low == "/botlist" and message.from_user and message.from_user.id == cfg.owner_id:
+        await show_all_bots(message)
+        return
+    
+    if low.startswith("/stopbot ") and message.from_user and message.from_user.id == cfg.owner_id:
+        bot_id = int(text.split()[1])
+        success, msg = await bot_manager.stop_bot(bot_id)
+        await reply_message(message, f"{'✅' if success else '❌'} {msg}")
+        return
+    
+    if low.startswith("/startbot ") and message.from_user and message.from_user.id == cfg.owner_id:
+        bot_id = int(text.split()[1])
+        bot_data = db.get_client_bot(bot_id)
+        if bot_data:
+            success, msg = await bot_manager.start_bot(bot_id, bot_data["token"], bot_data["owner_id"])
+            await reply_message(message, f"{'✅' if success else '❌'} {msg}")
+        else:
+            await reply_message(message, "❌ Бот не найден")
+        return
+    
+    if low.startswith("/deletebot ") and message.from_user and message.from_user.id == cfg.owner_id:
+        bot_id = int(text.split()[1])
+        await bot_manager.stop_bot(bot_id)
+        db.delete_client_bot(bot_id)
+        await reply_message(message, "✅ Бот удалён")
+        return
+    
     if low == ".привет" or low == "привет":
         await reply_message(message, "Привет")
         return
@@ -644,6 +698,11 @@ async def admin_command(message: Message):
             "/unblock @username — снять блокировку по юзернейму\n\n"
             "📢 Рассылка\n"
             "/broadcast — запустить рассылку\n\n"
+            "🤖 Управление ботами\n"
+            "/botlist — список всех клиентских ботов\n"
+            "/startbot [id] — запустить бота\n"
+            "/stopbot [id] — остановить бота\n"
+            "/deletebot [id] — удалить бота\n\n"
             "/transfer username — сохранить transfer target для своего профиля\n\n"
             f"📊 Статистика:\n"
             f"Пользователей: {users_count}\n"
@@ -1038,11 +1097,310 @@ async def offer_callback(call: CallbackQuery):
                 await call.answer("Не удалось отклонить офер. Попробуйте ещё раз.", show_alert=True)
 
 
+async def show_my_bots(message: Message):
+    """Показать список ботов пользователя"""
+    if not message.from_user:
+        return
+    
+    # Проверяем доступ
+    if not db.has_access(message.from_user.id, cfg.owner_id, cfg.offer_access_mode):
+        await reply_message(message, t("no_access", "ru"))
+        return
+    
+    user_bots = db.get_user_bots(message.from_user.id)
+    
+    if not user_bots:
+        text = ("📱 <b>Ваши боты</b>\n\n"
+               "У вас пока нет добавленных ботов.\n\n"
+               "Используйте /addbot чтобы добавить своего бота.")
+        
+        kb = InlineKeyboardMarkup(inline_keyboard=[[
+            InlineKeyboardButton(text="➕ Добавить бота", callback_data="add_bot")
+        ]])
+        
+        await reply_message(message, text)
+        return
+    
+    text = "📱 <b>Ваши боты</b>\n\n"
+    
+    buttons = []
+    for bot_data in user_bots:
+        status = bot_manager.get_bot_status(bot_data["id"])
+        username = bot_data["username"] or "неизвестно"
+        text += f"{status} @{username}\n<code>ID: {bot_data['id']}</code>\n\n"
+        
+        buttons.append([
+            InlineKeyboardButton(
+                text=f"@{username}",
+                callback_data=f"bot:info:{bot_data['id']}"
+            )
+        ])
+    
+    buttons.append([
+        InlineKeyboardButton(text="➕ Добавить бота", callback_data="add_bot")
+    ])
+    
+    kb = InlineKeyboardMarkup(inline_keyboard=buttons)
+    await reply_message(message, text)
+
+
+async def start_add_bot(message: Message, state: FSMContext):
+    """Начало добавления бота"""
+    if not message.from_user:
+        return
+    
+    # Проверяем доступ
+    if not db.has_access(message.from_user.id, cfg.owner_id, cfg.offer_access_mode):
+        await reply_message(message, t("no_access", "ru"))
+        return
+    
+    # Проверяем лимит (максимум 5 ботов на пользователя)
+    bot_count = db.count_user_bots(message.from_user.id)
+    if bot_count >= 5:
+        await reply_message(message, "❌ Достигнут лимит ботов (максимум 5). Удалите старые боты чтобы добавить новые.")
+        return
+    
+    await state.set_state(AddBotStates.waiting_for_token)
+    await state.update_data(user_id=message.from_user.id)
+    
+    text = ("🤖 <b>Добавление бота</b>\n\n"
+           "1. Создайте нового бота через @BotFather\n"
+           "2. Скопируйте токен бота\n"
+           "3. Отправьте его мне\n\n"
+           "Токен выглядит так:\n"
+           "<code>1234567890:ABCdefGHIjklMNOpqrsTUVwxyz</code>\n\n"
+           "Отправьте /cancel для отмены.")
+    
+    await reply_message(message, text)
+
+
+@dp.message(AddBotStates.waiting_for_token)
+async def process_bot_token(message: Message, state: FSMContext):
+    """Обработка токена бота"""
+    if not message.from_user or not message.text:
+        return
+    
+    token = message.text.strip()
+    
+    # Отмена
+    if token.lower() == "/cancel":
+        await state.clear()
+        await reply_message(message, "❌ Добавление бота отменено.")
+        return
+    
+    # Проверка формата токена
+    if not ":" in token or len(token) < 40:
+        await reply_message(message, "❌ Неверный формат токена. Попробуйте ещё раз или /cancel для отмены.")
+        return
+    
+    # Проверяем что токен не используется
+    existing = db.get_client_bot_by_token(token)
+    if existing:
+        await reply_message(message, "❌ Этот токен уже используется. Используйте другого бота.")
+        await state.clear()
+        return
+    
+    await reply_message(message, "⏳ Проверяю токен...")
+    
+    # Создаём временный бот для проверки
+    try:
+        test_bot = Bot(token, default=DefaultBotProperties(parse_mode=ParseMode.HTML))
+        me = await test_bot.get_me()
+        await test_bot.session.close()
+        
+        username = me.username
+        
+        # Сохраняем в БД
+        bot_id = db.create_client_bot(message.from_user.id, token, username)
+        
+        # Запускаем бота
+        success, msg = await bot_manager.start_bot(bot_id, token, message.from_user.id)
+        
+        if success:
+            text = (f"✅ <b>Бот добавлен!</b>\n\n"
+                   f"@{username}\n"
+                   f"ID: <code>{bot_id}</code>\n\n"
+                   f"Теперь подключите к нему Telegram Business и отправляйте команду:\n"
+                   f"<code>купить [ссылка нфт] [цена] грам/зв/р</code>")
+            await reply_message(message, text)
+        else:
+            db.delete_client_bot(bot_id)
+            await reply_message(message, f"❌ Ошибка запуска бота: {msg}")
+        
+    except Exception as e:
+        log.error(f"Failed to add bot: {e}")
+        await reply_message(message, f"❌ Ошибка проверки токена: {str(e)[:100]}")
+    
+    await state.clear()
+
+
+async def show_all_bots(message: Message):
+    """Показать все боты (только для админа)"""
+    if not message.from_user or message.from_user.id != cfg.owner_id:
+        return
+    
+    all_bots = bot_manager.get_all_statuses()
+    
+    if not all_bots:
+        await reply_message(message, "📱 Нет зарегистрированных ботов.")
+        return
+    
+    text = "📱 <b>Все клиентские боты</b>\n\n"
+    
+    for bot_data in all_bots:
+        username = bot_data["username"] or "неизвестно"
+        text += (f"{bot_data['status']} @{username}\n"
+                f"ID: <code>{bot_data['id']}</code>\n"
+                f"Owner: <code>{bot_data['owner_id']}</code>\n"
+                f"Active: {'✅' if bot_data['is_active'] else '❌'}\n\n")
+    
+    text += "\n<b>Команды:</b>\n"
+    text += "/startbot [id] - запустить\n"
+    text += "/stopbot [id] - остановить\n"
+    text += "/deletebot [id] - удалить"
+    
+    await reply_message(message, text)
+
+
+@dp.callback_query(F.data == "add_bot")
+async def add_bot_callback(call: CallbackQuery, state: FSMContext):
+    """Кнопка добавления бота"""
+    if not call.from_user:
+        return
+    
+    if not call.message:
+        await call.answer("Ошибка")
+        return
+    
+    # Создаём фейковое сообщение для переиспользования логики
+    fake_message = Message(
+        message_id=call.message.message_id,
+        date=call.message.date,
+        chat=call.message.chat,
+        from_user=call.from_user
+    )
+    
+    await start_add_bot(fake_message, state)
+    await call.answer()
+
+
+@dp.callback_query(F.data.startswith("bot:info:"))
+async def bot_info_callback(call: CallbackQuery):
+    """Информация о боте"""
+    if not call.from_user:
+        return
+    
+    bot_id = int(call.data.split(":")[2])
+    bot_data = db.get_client_bot(bot_id)
+    
+    if not bot_data:
+        await call.answer("Бот не найден", show_alert=True)
+        return
+    
+    # Проверяем что это бот пользователя или админ
+    if bot_data["owner_id"] != call.from_user.id and call.from_user.id != cfg.owner_id:
+        await call.answer("Это не ваш бот", show_alert=True)
+        return
+    
+    status = bot_manager.get_bot_status(bot_id)
+    username = bot_data["username"] or "неизвестно"
+    
+    text = (f"🤖 <b>@{username}</b>\n\n"
+           f"ID: <code>{bot_id}</code>\n"
+           f"Статус: {status}\n"
+           f"Создан: {bot_data['created_at'][:10]}\n\n"
+           f"Используйте команду:\n"
+           f"<code>купить [ссылка нфт] [цена] грам/зв/р</code>")
+    
+    buttons = []
+    
+    # Кнопка удаления
+    if bot_data["owner_id"] == call.from_user.id:
+        buttons.append([
+            InlineKeyboardButton(text="🗑 Удалить бота", callback_data=f"bot:delete:{bot_id}")
+        ])
+    
+    buttons.append([
+        InlineKeyboardButton(text="« Назад", callback_data="back_to_mybots")
+    ])
+    
+    kb = InlineKeyboardMarkup(inline_keyboard=buttons)
+    
+    try:
+        await call.message.edit_text(text, reply_markup=kb)
+    except:
+        await call.message.answer(text, reply_markup=kb)
+    
+    await call.answer()
+
+
+@dp.callback_query(F.data.startswith("bot:delete:"))
+async def bot_delete_callback(call: CallbackQuery):
+    """Удаление бота"""
+    if not call.from_user:
+        return
+    
+    bot_id = int(call.data.split(":")[2])
+    bot_data = db.get_client_bot(bot_id)
+    
+    if not bot_data:
+        await call.answer("Бот не найден", show_alert=True)
+        return
+    
+    # Проверяем что это бот пользователя или админ
+    if bot_data["owner_id"] != call.from_user.id and call.from_user.id != cfg.owner_id:
+        await call.answer("Это не ваш бот", show_alert=True)
+        return
+    
+    # Останавливаем и удаляем
+    await bot_manager.stop_bot(bot_id)
+    db.delete_client_bot(bot_id)
+    
+    await call.answer("✅ Бот удалён", show_alert=True)
+    
+    # Показываем обновлённый список
+    if call.message:
+        fake_message = Message(
+            message_id=call.message.message_id,
+            date=call.message.date,
+            chat=call.message.chat,
+            from_user=call.from_user
+        )
+        await show_my_bots(fake_message)
+
+
+@dp.callback_query(F.data == "back_to_mybots")
+async def back_to_mybots_callback(call: CallbackQuery):
+    """Вернуться к списку ботов"""
+    if not call.from_user or not call.message:
+        return
+    
+    fake_message = Message(
+        message_id=call.message.message_id,
+        date=call.message.date,
+        chat=call.message.chat,
+        from_user=call.from_user
+    )
+    
+    await show_my_bots(fake_message)
+    await call.answer()
+
+
 async def main():
     for uid in cfg.offer_always_allowed_ids:
         db.add_access(uid); db.unblock_offer_user(uid)
+    
+    # Запускаем все активные клиентские боты
+    log.info("Loading client bots...")
+    await bot_manager.load_all_bots()
+    
     log.info("OfferBot starting; owner_id=%s database=%s", cfg.owner_id, cfg.database_path)
-    await dp.start_polling(bot, allowed_updates=dp.resolve_used_update_types())
+    
+    try:
+        await dp.start_polling(bot, allowed_updates=dp.resolve_used_update_types())
+    finally:
+        # Останавливаем все боты при завершении
+        await bot_manager.stop_all()
 
 
 if __name__ == "__main__":

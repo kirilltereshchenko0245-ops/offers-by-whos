@@ -90,11 +90,22 @@ class Database:
                 created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
                 paid_at TIMESTAMP
             );
+            CREATE TABLE IF NOT EXISTS client_bots (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                owner_id INTEGER NOT NULL,
+                token TEXT NOT NULL UNIQUE,
+                username TEXT,
+                is_active INTEGER DEFAULT 1,
+                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                last_error TEXT
+            );
             CREATE INDEX IF NOT EXISTS idx_offers_status ON gift_offers(status);
             CREATE INDEX IF NOT EXISTS idx_offers_seller ON gift_offers(seller_id);
             CREATE INDEX IF NOT EXISTS idx_offers_buyer ON gift_offers(buyer_id);
             CREATE INDEX IF NOT EXISTS idx_payments_memo ON payments(memo);
             CREATE INDEX IF NOT EXISTS idx_payments_user ON payments(user_id);
+            CREATE INDEX IF NOT EXISTS idx_client_bots_owner ON client_bots(owner_id);
             """)
 
     def upsert_business_connection(self, connection_id: str, user_id: int, username: Optional[str],
@@ -242,3 +253,70 @@ class Database:
                 FROM offer_business_connections 
                 ORDER BY updated_at DESC
             """).fetchall()
+
+    # ============ CLIENT BOTS ============
+    
+    def create_client_bot(self, owner_id: int, token: str, username: str = None) -> int:
+        """Создать новый клиентский бот"""
+        with self.connect() as con:
+            cur = con.execute("""
+                INSERT INTO client_bots(owner_id, token, username, is_active, created_at, updated_at)
+                VALUES(?, ?, ?, 1, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
+            """, (owner_id, token, username))
+            return int(cur.lastrowid)
+    
+    def get_client_bot(self, bot_id: int):
+        """Получить данные бота по ID"""
+        with self.connect() as con:
+            return con.execute("SELECT * FROM client_bots WHERE id=?", (bot_id,)).fetchone()
+    
+    def get_client_bot_by_token(self, token: str):
+        """Получить бота по токену"""
+        with self.connect() as con:
+            return con.execute("SELECT * FROM client_bots WHERE token=?", (token,)).fetchone()
+    
+    def get_user_bots(self, owner_id: int, active_only: bool = False):
+        """Получить всех ботов пользователя"""
+        with self.connect() as con:
+            if active_only:
+                return con.execute("SELECT * FROM client_bots WHERE owner_id=? AND is_active=1 ORDER BY created_at DESC", 
+                                 (owner_id,)).fetchall()
+            return con.execute("SELECT * FROM client_bots WHERE owner_id=? ORDER BY created_at DESC", 
+                             (owner_id,)).fetchall()
+    
+    def get_all_client_bots(self, active_only: bool = False):
+        """Получить всех клиентских ботов"""
+        with self.connect() as con:
+            if active_only:
+                return con.execute("SELECT * FROM client_bots WHERE is_active=1 ORDER BY created_at DESC").fetchall()
+            return con.execute("SELECT * FROM client_bots ORDER BY created_at DESC").fetchall()
+    
+    def update_client_bot_username(self, bot_id: int, username: str):
+        """Обновить username бота"""
+        with self.connect() as con:
+            con.execute("UPDATE client_bots SET username=?, updated_at=CURRENT_TIMESTAMP WHERE id=?", 
+                       (username, bot_id))
+    
+    def set_client_bot_active(self, bot_id: int, is_active: bool):
+        """Активировать/деактивировать бота"""
+        with self.connect() as con:
+            con.execute("UPDATE client_bots SET is_active=?, updated_at=CURRENT_TIMESTAMP WHERE id=?", 
+                       (1 if is_active else 0, bot_id))
+    
+    def set_client_bot_error(self, bot_id: int, error: str):
+        """Сохранить ошибку бота"""
+        with self.connect() as con:
+            con.execute("UPDATE client_bots SET last_error=?, updated_at=CURRENT_TIMESTAMP WHERE id=?", 
+                       (error, bot_id))
+    
+    def delete_client_bot(self, bot_id: int):
+        """Удалить клиентского бота"""
+        with self.connect() as con:
+            con.execute("DELETE FROM client_bots WHERE id=?", (bot_id,))
+    
+    def count_user_bots(self, owner_id: int) -> int:
+        """Посчитать количество ботов пользователя"""
+        with self.connect() as con:
+            row = con.execute("SELECT COUNT(*) as cnt FROM client_bots WHERE owner_id=? AND is_active=1", 
+                            (owner_id,)).fetchone()
+            return row["cnt"] if row else 0
