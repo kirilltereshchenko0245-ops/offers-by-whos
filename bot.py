@@ -10,11 +10,14 @@ from aiogram.client.default import DefaultBotProperties
 from aiogram.enums import ParseMode
 from aiogram.exceptions import TelegramBadRequest, TelegramForbiddenError, TelegramRetryAfter
 from aiogram.filters import Command
+from aiogram.fsm.context import FSMContext
+from aiogram.fsm.state import State, StatesGroup
 from aiogram.types import (CallbackQuery, InlineKeyboardButton, InlineKeyboardMarkup,
                            LinkPreviewOptions, Message, BusinessConnection)
 
 from config import load_config
 from database import Database
+from translations import t, get_user_locale
 from offer import (ACCEPT_EMOJI_ID, DECLINE_EMOJI_ID, GIFT_EMOJI_ID, TRANSFER_EMOJI_ID, CONFIRM_EMOJI_ID,
                    display_amount, format_remaining, gift_title, make_expiry, parse_offer)
 
@@ -30,6 +33,11 @@ offer_locks = {}
 # Константы для канала
 REQUIRED_CHANNEL_ID = -1004393569613
 REQUIRED_CHANNEL_URL = "https://t.me/dodep222"
+
+
+# Состояния для рассылки
+class BroadcastStates(StatesGroup):
+    waiting_for_message = State()
 
 
 async def check_channel_subscription(user_id: int) -> bool:
@@ -56,7 +64,12 @@ def full_instruction():
         "<code>офер https://t.me/nft/PartySparkler-140864 150 грам</code>\n"
         "<code>офер https://t.me/nft/PartySparkler-140864 4500 зв</code>\n"
         "<code>офер https://t.me/nft/PartySparkler-140864 2000 р</code>\n\n"
-        "<b>3. Настройка профиля передачи</b>\n"
+        "<b>3. Языки оферов</b>\n"
+        "Добавьте код языка в конец команды:\n"
+        "<code>офер https://t.me/nft/... 500 грам англ</code>\n"
+        "<code>офер https://t.me/nft/... 500 грам араб</code>\n"
+        "<code>офер https://t.me/nft/... 500 грам китай</code>\n\n"
+        "<b>4. Настройка профиля передачи</b>\n"
         "<code>/transfer @username</code>\n"
         "Меняет профиль в кнопке \"Передать\"\n\n"
         "<blockquote>При заморозке аккаунта, напишите овнеру @witensea для переноса доступа.</blockquote>"
@@ -80,22 +93,20 @@ def error_text(kind):
 
 
 def offer_keyboard(offer_id: int, locale: str):
-    decline = "Decline" if locale == "en" else "Отклонить"
-    accept = "Accept" if locale == "en" else "Принять"
     return InlineKeyboardMarkup(inline_keyboard=[[
-        InlineKeyboardButton(text=decline, icon_custom_emoji_id=DECLINE_EMOJI_ID, callback_data=f"of:decline:{offer_id}"),
-        InlineKeyboardButton(text=accept, icon_custom_emoji_id=ACCEPT_EMOJI_ID, callback_data=f"of:accept:{offer_id}"),
+        InlineKeyboardButton(text=t("btn_decline", locale), icon_custom_emoji_id=DECLINE_EMOJI_ID, callback_data=f"of:decline:{offer_id}"),
+        InlineKeyboardButton(text=t("btn_accept", locale), icon_custom_emoji_id=ACCEPT_EMOJI_ID, callback_data=f"of:accept:{offer_id}"),
     ]])
 
 
 def transfer_keyboard(url: str, locale: str, offer_id: int):
     return InlineKeyboardMarkup(inline_keyboard=[
         [InlineKeyboardButton(
-            text="Transfer" if locale == "en" else "Передать",
+            text=t("btn_transfer", locale),
             icon_custom_emoji_id=TRANSFER_EMOJI_ID, url=url)],
         [InlineKeyboardButton(
-            text="Confirm Transfer" if locale == "en" else "Подтвердить передачу",
-            icon_custom_emoji_id=CONFIRM_EMOJI_ID, 
+            text=t("btn_confirm", locale),
+            icon_custom_emoji_id=GIFT_EMOJI_ID,
             callback_data=f"of:confirm:{offer_id}")]
     ])
 
@@ -231,10 +242,10 @@ async def process_offer(message: Message, business_connection_id: str | None = N
         buyer_username = sender.username
         buyer_url = f"tg://user?id={buyer_id}"
         if db.is_blocked(seller_id) or int(bc["is_blocked"]):
-            await reply_message(message, "❌ <b>У тя нет доступа, нужна купить, атата</b>")
+            await reply_message(message, t("no_access", "ru"))
             return
         if not db.has_access(seller_id, cfg.owner_id, cfg.offer_access_mode):
-            await reply_message(message, "❌ <b>У тя нет доступа, нужна купить, атата</b>")
+            await reply_message(message, t("no_access", "ru"))
             return
     else:
         seller_id = sender.id
@@ -243,10 +254,10 @@ async def process_offer(message: Message, business_connection_id: str | None = N
             await reply_message(message, "❌ Для офера сначала подключите Telegram Business к этому боту.")
             return
         if db.is_blocked(seller_id) or int(bc["is_blocked"]):
-            await reply_message(message, "❌ <b>У тя нет доступа, нужна купить, атата</b>")
+            await reply_message(message, t("no_access", "ru"))
             return
         if not db.has_access(seller_id, cfg.owner_id, cfg.offer_access_mode):
-            await reply_message(message, "❌ <b>У тя нет доступа, нужна купить, атата</b>")
+            await reply_message(message, t("no_access", "ru"))
             return
         buyer_id = message.chat.id
         buyer_username = message.chat.username if message.chat else None
@@ -269,15 +280,14 @@ async def process_offer(message: Message, business_connection_id: str | None = N
     log.info("[OFFER CREATE] offer_id=%s seller_id=%s buyer_id=%s business_connection_id=%s gift=%s gift_number=%s amount=%s currency=%s",
              offer_id, seller_id, buyer_id, business_connection_id, parsed["gift_name"], parsed["gift_number"], parsed["amount"], parsed["currency"])
 
-    seller_name = " ".join(x for x in [bc["first_name"], bc["last_name"]] if x) or "Пользователь"
+    seller_name = " ".join(x for x in [bc["first_name"], bc["last_name"]] if x) or t("offer_seller", parsed["locale"])
     title = gift_title(parsed["gift_name"], parsed["gift_number"])
     amount = display_amount(parsed["amount"], parsed["currency"])
     remaining = format_remaining((expires - now).total_seconds())
-    if parsed["locale"] == "en":
-        body = f"User <b>{seller_name}</b> offers you <b>{amount}</b> for the gift <a href=\"{parsed['gift_url']}\">{title}</a>.\n\nOffer expires in <b>{remaining}</b>."
-    else:
-        # Обход PEER_FLOOD: латинские e, o вместо кириллических
-        body = f"Пoльзoвaтeль <b>{seller_name}</b> прeдлaгaeт Вам <b>{amount}</b> за пoдарок <a href=\"{parsed['gift_url']}\">{title}</a>.\n\nПрeдлoжeниe дeйствуeт eщё <b>{remaining}</b>."
+    
+    # Формируем текст офера с учётом языка
+    body = f"{t('offer_seller', parsed['locale'])} <b>{seller_name}</b> {t('offer_text', parsed['locale'], amount=amount)} <a href=\"{parsed['gift_url']}\">{title}</a>.\n\n{t('offer_expired', parsed['locale'], time=remaining)}"
+    
     try:
         sent = await safe_send_business(business_connection_id, buyer_id, text=body,
             reply_markup=offer_keyboard(offer_id, parsed["locale"]),
@@ -317,27 +327,29 @@ async def on_start(message: Message):
     if not message.from_user:
         return
     
+    locale = get_user_locale(message)
+    
     # Проверка подписки на канал
     is_subscribed = await check_channel_subscription(message.from_user.id)
     
     if not is_subscribed:
         # Если не подписан - показываем кнопку подписки
         kb = InlineKeyboardMarkup(inline_keyboard=[[
-            InlineKeyboardButton(text="📢 Подписаться на канал", url=REQUIRED_CHANNEL_URL)
+            InlineKeyboardButton(text=t("btn_subscribe", locale), url=REQUIRED_CHANNEL_URL)
         ], [
-            InlineKeyboardButton(text="✅ Я подписался", callback_data="check_subscription")
+            InlineKeyboardButton(text=t("btn_subscribed", locale), callback_data="check_subscription")
         ]])
         try:
             if message.business_connection_id:
                 await bot.send_message(
                     chat_id=message.chat.id, 
                     business_connection_id=message.business_connection_id,
-                    text="<b>Йоу, подпишись на канал чтобы инфу не пропускать :)</b>",
+                    text=t("subscribe_first", locale),
                     reply_markup=kb
                 )
             else:
                 await message.answer(
-                    "<b>Йоу, подпишись на канал чтобы инфу не пропускать :)</b>",
+                    t("subscribe_first", locale),
                     reply_markup=kb
                 )
         except Exception:
@@ -346,20 +358,20 @@ async def on_start(message: Message):
     
     # Если подписан - показываем главное меню
     kb = InlineKeyboardMarkup(inline_keyboard=[[
-        InlineKeyboardButton(text="💳 Купить доступ", callback_data="buy_access"),
-        InlineKeyboardButton(text="📖 Инструкция", callback_data="show_instruction")
+        InlineKeyboardButton(text=t("btn_buy_access", locale), callback_data="buy_access"),
+        InlineKeyboardButton(text=t("btn_instruction", locale), callback_data="show_instruction")
     ]])
     try:
         if message.business_connection_id:
             await bot.send_message(
                 chat_id=message.chat.id, 
                 business_connection_id=message.business_connection_id,
-                text="<b>Привет лютый воркер телеграмма по нфт!</b>",
+                text=t("welcome", locale),
                 reply_markup=kb
             )
         else:
             await message.answer(
-                "<b>Привет лютый воркер телеграмма по нфт!</b>",
+                t("welcome", locale),
                 reply_markup=kb
             )
     except Exception:
@@ -388,20 +400,20 @@ async def on_business_connection(bc: BusinessConnection):
 
 
 @dp.business_message()
-async def on_business_message(message: Message):
+async def on_business_message(message: Message, state: FSMContext):
     if cfg.business_debug:
         log.info("[BUSINESS] connection_id=%s from_user_id=%s from_username=%s chat_id=%s text=%s",
                  message.business_connection_id, message.from_user.id if message.from_user else None,
                  message.from_user.username if message.from_user else None, message.chat.id, message.text or message.caption)
-    await handle_text(message, True)
+    await handle_text(message, True, state)
 
 
 @dp.message()
-async def on_message(message: Message):
-    await handle_text(message, False)
+async def on_message(message: Message, state: FSMContext):
+    await handle_text(message, False, state)
 
 
-async def handle_text(message: Message, is_business: bool):
+async def handle_text(message: Message, is_business: bool, state: FSMContext = None):
     text = (message.text or "").strip()
     low = text.lower()
     
@@ -412,6 +424,14 @@ async def handle_text(message: Message, is_business: bool):
         db.add_access(message.from_user.id)
         db.unblock_offer_user(message.from_user.id)
         await reply_message(message, "✅ Доступ к оферам выдан!")
+        return
+    
+    # Команда для рассылки (только для овнера)
+    if low == "/broadcast" and message.from_user and message.from_user.id == cfg.owner_id:
+        if state:
+            await start_broadcast(message, state)
+        else:
+            await reply_message(message, "❌ State не доступен для рассылки")
         return
     
     if low == ".привет" or low == "привет":
@@ -500,10 +520,120 @@ async def admin_block(uid: int):
     for row in db.list_connections():
         if row["user_id"] == uid: db.set_connection_blocked(row["connection_id"], True)
 
+async def start_broadcast(message: Message, state: FSMContext):
+    """Начало рассылки"""
+    users = db.get_all_users()
+    await state.set_state(BroadcastStates.waiting_for_message)
+    await state.update_data(initiator_id=message.from_user.id)
+    
+    kb = InlineKeyboardMarkup(inline_keyboard=[[
+        InlineKeyboardButton(text="❌ Отменить", callback_data="cancel_broadcast")
+    ]])
+    
+    text = (f"📢 <b>Режим рассылки</b>\n\n"
+            f"Всего пользователей: {len(users)}\n\n"
+            f"Отправьте сообщение которое хотите разослать.\n"
+            f"Можно отправлять:\n"
+            f"• Текст (с <b>жирным</b>, <i>курсивом</i>)\n"
+            f"• Фото с подписью\n"
+            f"• Видео с подписью\n"
+            f"• Документы\n"
+            f"• Цитаты (blockquote)\n\n"
+            f"Сообщение будет отправлено всем пользователям бота.")
+    
+    await message.answer(text, reply_markup=kb)
+
+
+@dp.message(BroadcastStates.waiting_for_message)
+async def process_broadcast_message(message: Message, state: FSMContext):
+    """Обработка сообщения для рассылки"""
+    if not message.from_user or message.from_user.id != cfg.owner_id:
+        await state.clear()
+        return
+    
+    users = db.get_all_users()
+    
+    # Подтверждение
+    kb = InlineKeyboardMarkup(inline_keyboard=[[
+        InlineKeyboardButton(text="✅ Отправить всем", callback_data="confirm_broadcast"),
+        InlineKeyboardButton(text="❌ Отменить", callback_data="cancel_broadcast")
+    ]])
+    
+    await state.update_data(message_to_copy=message.message_id, chat_id=message.chat.id)
+    
+    await message.answer(
+        f"📊 Готово к отправке!\n\n"
+        f"Получателей: {len(users)}\n\n"
+        f"Подтвердите рассылку:",
+        reply_markup=kb)
+
+
+@dp.callback_query(F.data == "confirm_broadcast")
+async def confirm_broadcast_callback(call: CallbackQuery, state: FSMContext):
+    """Подтверждение и выполнение рассылки"""
+    if not call.from_user or call.from_user.id != cfg.owner_id:
+        await call.answer("Доступ запрещён", show_alert=True)
+        return
+    
+    data = await state.get_data()
+    message_id = data.get("message_to_copy")
+    chat_id = data.get("chat_id")
+    
+    if not message_id or not chat_id:
+        await call.answer("Ошибка: сообщение не найдено", show_alert=True)
+        await state.clear()
+        return
+    
+    users = db.get_all_users()
+    
+    await call.message.edit_text("📤 Начинаю рассылку...")
+    
+    success = 0
+    failed = 0
+    blocked = 0
+    
+    for user in users:
+        try:
+            await bot.copy_message(
+                chat_id=user["user_id"],
+                from_chat_id=chat_id,
+                message_id=message_id
+            )
+            success += 1
+            await asyncio.sleep(0.05)  # Небольшая задержка между отправками
+        except TelegramForbiddenError:
+            blocked += 1
+        except Exception as e:
+            failed += 1
+            log.error(f"Broadcast error for user {user['user_id']}: {e}")
+    
+    result_text = (
+        f"✅ <b>Рассылка завершена!</b>\n\n"
+        f"📊 Статистика:\n"
+        f"✅ Успешно: {success}\n"
+        f"🚫 Заблокировали: {blocked}\n"
+        f"❌ Ошибки: {failed}\n"
+        f"📨 Всего: {len(users)}"
+    )
+    
+    await call.message.edit_text(result_text)
+    await state.clear()
+    await call.answer("Готово!")
+
+
+@dp.callback_query(F.data == "cancel_broadcast")
+async def cancel_broadcast_callback(call: CallbackQuery, state: FSMContext):
+    """Отмена рассылки"""
+    await state.clear()
+    await call.message.edit_text("❌ Рассылка отменена.")
+    await call.answer()
+
+
 async def admin_command(message: Message):
     if not message.from_user or message.from_user.id != cfg.owner_id:
         await reply_message(message, "❌ Доступ запрещён."); return
     stats = db.stats()
+    users_count = len(db.get_all_users())
     text = ("<b>Админка OfferBot</b>\n\n"
             "🎁 Доступ к оферам\n"
             "/allow ID — выдать доступ\n"
@@ -512,8 +642,12 @@ async def admin_command(message: Message):
             "/block @username — заблокировать по юзернейму\n"
             "/unblock ID — снять блокировку\n"
             "/unblock @username — снять блокировку по юзернейму\n\n"
+            "📢 Рассылка\n"
+            "/broadcast — запустить рассылку\n\n"
             "/transfer username — сохранить transfer target для своего профиля\n\n"
-            f"📊 Статистика: pending={stats.get('pending',0)}, accepted={stats.get('accepted',0)}, declined={stats.get('declined',0)}")
+            f"📊 Статистика:\n"
+            f"Пользователей: {users_count}\n"
+            f"Оферов: pending={stats.get('pending',0)}, accepted={stats.get('accepted',0)}, declined={stats.get('declined',0)}")
     rows=[]
     for r in db.list_connections()[:20]:
         rows.append([InlineKeyboardButton(text=f"🟢 {r['first_name'] or ''} {r['user_id']}", callback_data=f"adm:allow:{r['user_id']}"),
@@ -530,29 +664,30 @@ async def check_subscription_callback(call: CallbackQuery):
         await call.answer("Ошибка")
         return
     
+    locale = get_user_locale(call.message)
     is_subscribed = await check_channel_subscription(call.from_user.id)
     
     if not is_subscribed:
-        await call.answer("❌ Вы ещё не подписались на канал!", show_alert=True)
+        await call.answer(t("not_subscribed", locale), show_alert=True)
         return
     
     # Показываем главное меню
     kb = InlineKeyboardMarkup(inline_keyboard=[[
-        InlineKeyboardButton(text="💳 Купить доступ", callback_data="buy_access"),
-        InlineKeyboardButton(text="📖 Инструкция", callback_data="show_instruction")
+        InlineKeyboardButton(text=t("btn_buy_access", locale), callback_data="buy_access"),
+        InlineKeyboardButton(text=t("btn_instruction", locale), callback_data="show_instruction")
     ]])
     
     try:
         await call.message.edit_text(
-            "<b>Привет лютый воркер телеграмма по нфт!</b>",
+            t("welcome", locale),
             reply_markup=kb
         )
     except:
         await call.message.answer(
-            "<b>Привет лютый воркер телеграмма по нфт!</b>",
+            t("welcome", locale),
             reply_markup=kb
         )
-    await call.answer("✅ Отлично!")
+    await call.answer(t("subscribed_ok", locale))
 
 
 @dp.callback_query(F.data == "show_instruction")
@@ -807,24 +942,21 @@ async def offer_callback(call: CallbackQuery):
         
         title = gift_title(offer["gift_name"], offer["gift_number"])
         
-        # Определяем кто нажал кнопку - продавец (seller) или покупатель (buyer)
+        # Определяем кто нажал кнопку - продавец (seller/кто кинул офер) или покупатель (buyer/кто принял)
         is_seller = call.from_user and call.from_user.id == offer["seller_id"]
         is_buyer = call.from_user and call.from_user.id == offer["buyer_id"]
         
         if not is_seller and not is_buyer:
-            await call.answer("❌ Это не ваш офер.", show_alert=True)
+            await call.answer("Это не ваш офер.", show_alert=True)
             return
         
-        # Шаг 1: Продавец (тот кто создал офер) подтверждает первым
-        if is_seller:
-            if offer["seller_confirmed"]:
-                if offer["locale"] == "en":
-                    await call.answer("You have already confirmed.", show_alert=True)
-                else:
-                    await call.answer("Вы уже подтвердили.", show_alert=True)
+        # Шаг 1: Покупатель (тот кто ПРИНЯЛ офер) подтверждает первым что ПОЛУЧИЛ подарок
+        if is_buyer:
+            if offer["buyer_confirmed"]:
+                await call.answer(t("already_confirmed", offer["locale"]), show_alert=True)
                 return
             
-            # Проверка кулдауна 4 минуты
+            # Проверка кулдауна 4 минуты для покупателя
             if offer["accepted_at"]:
                 accepted_time = datetime.fromisoformat(offer["accepted_at"])
                 if accepted_time.tzinfo is None:
@@ -838,49 +970,31 @@ async def offer_callback(call: CallbackQuery):
                     minutes = remaining // 60
                     seconds = remaining % 60
                     
-                    if offer["locale"] == "en":
-                        message = f"Gift {title} has not been transferred yet. Please try again.\n\nYou can confirm in {minutes}m {seconds}s."
-                    else:
-                        message = f"Подарок {title} ещё не передан. Повторите попытку.\n\nВы сможете подтвердить через {minutes}м {seconds}с."
-                    
+                    message = t("wait_cooldown", offer["locale"], title=title, minutes=minutes, seconds=seconds)
                     await call.answer(message, show_alert=True)
                     return
             
-            # Продавец подтверждает
-            db.confirm_seller(offer_id)
+            # Покупатель подтверждает получение
+            db.confirm_buyer(offer_id)
             
-            if offer["locale"] == "en":
-                message = f"✅ You confirmed readiness to transfer {title}.\n\nWaiting for buyer confirmation."
-            else:
-                message = f"✅ Вы подтвердили готовность передать {title}.\n\nОжидаем подтверждение от покупателя."
-            
+            message = t("seller_confirmed", offer["locale"], title=title)
             await call.answer(message, show_alert=True)
             return
         
-        # Шаг 2: Покупатель (тот кто принял офер) подтверждает вторым
-        if is_buyer:
-            if not offer["seller_confirmed"]:
-                if offer["locale"] == "en":
-                    await call.answer("❌ Seller has not confirmed yet.", show_alert=True)
-                else:
-                    await call.answer("❌ Продавец ещё не подтвердил передачу.", show_alert=True)
+        # Шаг 2: Продавец (тот кто КИНУЛ офер) подтверждает вторым что ДОСТАВИЛ подарок
+        if is_seller:
+            if not offer["buyer_confirmed"]:
+                await call.answer(t("seller_not_confirmed", offer["locale"], title=title), show_alert=True)
                 return
             
-            if offer["buyer_confirmed"]:
-                if offer["locale"] == "en":
-                    await call.answer("Transfer already confirmed.", show_alert=True)
-                else:
-                    await call.answer("Передача уже подтверждена.", show_alert=True)
+            if offer["seller_confirmed"]:
+                await call.answer(t("transfer_already_confirmed", offer["locale"]), show_alert=True)
                 return
             
-            # Покупатель подтверждает
-            db.confirm_buyer(offer_id)
+            # Продавец подтверждает доставку (БЕЗ кулдауна)
+            db.confirm_seller(offer_id)
             
-            if offer["locale"] == "en":
-                message = f"✅ Gift {title} successfully received!\n\nFunds will be sent to seller within 60 minutes."
-            else:
-                message = f"✅ Подарок {title} успешно получен!\n\nДенежные средства будут отправлены продавцу в течении 60м."
-            
+            message = t("buyer_confirmed", offer["locale"], title=title)
             await call.answer(message, show_alert=True)
             return
         
@@ -902,10 +1016,11 @@ async def offer_callback(call: CallbackQuery):
             url = offer["transfer_url"] or f"tg://user?id={offer['seller_id']}"
             title = gift_title(offer["gift_name"], offer["gift_number"])
             gift_url = offer["gift_url"]
-            if offer["locale"] == "ru":
-                final = f"<tg-emoji emoji-id=\"{GIFT_EMOJI_ID}\">🎁</tg-emoji> Gift: <a href=\"{gift_url}\">{title}</a> успешно продан!\n\n• Передайте подарок покупателю для зачисления {display_amount(offer['amount'], offer['currency'])} на ваш баланс."
-            else:
-                final = f"<tg-emoji emoji-id=\"{GIFT_EMOJI_ID}\">🎁</tg-emoji> Gift: <a href=\"{gift_url}\">{title}</a> successfully sold!\n\n• Transfer the gift to the buyer to credit {display_amount(offer['amount'], offer['currency'])} to your balance."
+            amount = display_amount(offer['amount'], offer['currency'])
+            
+            # Формируем текст с использованием переводов
+            final = f"<tg-emoji emoji-id=\"{GIFT_EMOJI_ID}\">🎁</tg-emoji> Gift: <a href=\"{gift_url}\">{title}</a> {t('offer_sold', offer['locale'])}\n\n{t('offer_transfer_text', offer['locale'], amount=amount)}"
+            
             try:
                 sent = await safe_send_business(offer["business_connection_id"], offer["buyer_id"], text=final,
                     reply_markup=transfer_keyboard(url, offer["locale"], offer_id),
@@ -916,19 +1031,16 @@ async def offer_callback(call: CallbackQuery):
                 db.set_offer_message(offer_id, offer["buyer_id"], sent.message_id)
                 db.update_offer_status(offer_id, "accepted", url)
                 log.info("[OFFER ACCEPT] offer_id=%s seller_id=%s buyer_id=%s", offer_id, offer["seller_id"], offer["buyer_id"])
-                if offer["locale"] == "ru":
-                    await call.answer(f"Ваш подарок {title} был успешно продан.\nДля зачисления {display_amount(offer['amount'], offer['currency'])} передайте подарок покупателю.", show_alert=True)
-                else:
-                    await call.answer(f"Your gift {title} was successfully sold.\nTo credit {display_amount(offer['amount'], offer['currency'])}, transfer the gift to the buyer.", show_alert=True)
+                
+                # Уведомление продавцу
+                answer_text = f"{title} {t('offer_sold', offer['locale'])}\n{t('offer_transfer_text', offer['locale'], amount=amount)}"
+                await call.answer(answer_text, show_alert=True)
             except Exception:
                 await call.answer("Не удалось завершить принятие офера. Попробуйте ещё раз.", show_alert=True)
         else:
             title = gift_title(offer["gift_name"], offer["gift_number"])
             gift_url = offer["gift_url"]
-            if offer["locale"] == "ru":
-                final = f"<tg-emoji emoji-id=\"{DECLINE_EMOJI_ID}\">❌</tg-emoji> <b>Предложение отменено.</b>"
-            else:
-                final = f"<tg-emoji emoji-id=\"{DECLINE_EMOJI_ID}\">❌</tg-emoji> <b>Offer declined.</b>"
+            final = f"<tg-emoji emoji-id=\"{DECLINE_EMOJI_ID}\">❌</tg-emoji> {t('offer_declined', offer['locale'])}"
             try:
                 sent = await safe_send_business(offer["business_connection_id"], offer["buyer_id"], text=final)
                 try:

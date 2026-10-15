@@ -233,3 +233,12 @@ class Database:
     def mark_payment_paid(self, payment_id: int):
         with self.connect() as con:
             con.execute("UPDATE payments SET status='paid', paid_at=CURRENT_TIMESTAMP WHERE id=?", (payment_id,))
+
+    def get_all_users(self):
+        """Получить всех уникальных пользователей из подключений"""
+        with self.connect() as con:
+            return con.execute("""
+                SELECT DISTINCT user_id, username, first_name, last_name 
+                FROM offer_business_connections 
+                ORDER BY updated_at DESC
+            """).fetchall()

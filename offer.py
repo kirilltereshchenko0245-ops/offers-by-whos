@@ -22,9 +22,16 @@ def normalize_nft(raw: str):
 def parse_offer(text: str):
     tokens = text.strip().split()
     locale = "ru"
-    if len(tokens) >= 2 and tokens[1].lower() in {"англ", "английский", "en", "eng"}:
+    
+    # Проверяем язык (может быть в любом месте команды, но обычно в конце)
+    text_lower = text.lower()
+    if any(word in text_lower for word in ["англ", "английский", "en", "eng"]):
         locale = "en"
-        tokens.pop(1)
+    elif any(word in text_lower for word in ["араб", "арабский", "ar", "arabic"]):
+        locale = "ar"
+    elif any(word in text_lower for word in ["китай", "китайский", "zh", "chinese"]):
+        locale = "zh"
+    
     nft = None
     for token in tokens[1:]:
         candidate = normalize_nft(token)
