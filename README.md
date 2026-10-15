@@ -41,12 +41,23 @@ SQLite создаётся автоматически. Используется W
 ## Офер
 
 ```text
-.офер https://t.me/nft/PartySparkler-140864 150 грам
-.офер https://t.me/nft/PartySparkler-140864 4500 зв
-.офер англ https://t.me/nft/PartySparkler-140864 4500 stars
+купить https://t.me/nft/PartySparkler-140864 150 грам
+купить https://t.me/nft/PartySparkler-140864 4500 зв
+купить https://t.me/nft/PartySparkler-140864 2000 р
 ```
 
-Поддерживаются `грам/грамм/gram/grams` и `зв/звёзд/звезд/stars/star`.
+Языки (добавить в конец команды):
+
+```text
+купить https://t.me/nft/... 500 грам англ
+купить https://t.me/nft/... 500 грам араб
+купить https://t.me/nft/... 500 грам китай
+```
+
+Поддерживаются:
+- `грам/грамм/gram/grams`
+- `зв/звёзд/звезд/stars/star`
+- `р/руб/рубль/рублей/rub`
 
 ## Transfer target
 
