@@ -41,12 +41,11 @@ TRANSLATIONS = {
         "subscribed_ok": "✅ Отлично!",
         
         # Подтверждение передачи
-        "seller_confirmed": "Вы подтвердили готовность передать {title}.\n\nОжидаем подтверждение от покупателя.",
-        "buyer_confirmed": "Подарок {title} успешно доставлен покупателю.",
+        "seller_confirmed": "Передача подтверждена, ждём подтверждение покупателя.",
+        "buyer_confirmed": "Подарок {title} успешно передан покупателю!\n\nОжидайте зачисление {amount} в течении 60 минут.",
         "already_confirmed": "Вы уже подтвердили.",
-        "seller_not_confirmed": "Продавец не подтвердил поступление подарка {title} на его аккаунт. Повторите попытку после того как покупатель подтвердит передачу.",
+        "seller_not_confirmed": "Продавец не подтвердил поступление подарка {title} на его аккаунт. Повторите попытку после того как продавец подтвердит передачу.",
         "transfer_already_confirmed": "Передача уже подтверждена.",
-        "wait_cooldown": "Подарок {title} ещё не передан. Повторите попытку.\n\nВы сможете подтвердить через {minutes}м {seconds}с.",
     },
     
     "en": {
@@ -86,12 +85,11 @@ TRANSLATIONS = {
         "subscribed_ok": "✅ Great!",
         
         # Transfer confirmation
-        "seller_confirmed": "You confirmed readiness to transfer {title}.\n\nWaiting for buyer confirmation.",
-        "buyer_confirmed": "Gift {title} successfully delivered to the buyer.",
+        "seller_confirmed": "Transfer confirmed, waiting for buyer confirmation.",
+        "buyer_confirmed": "Gift {title} successfully transferred to the buyer!\n\nExpect {amount} to be credited within 60 minutes.",
         "already_confirmed": "You have already confirmed.",
-        "seller_not_confirmed": "Seller has not confirmed receipt of gift {title} on their account. Try again after buyer confirms transfer.",
+        "seller_not_confirmed": "Seller has not confirmed receipt of gift {title} on their account. Try again after seller confirms transfer.",
         "transfer_already_confirmed": "Transfer already confirmed.",
-        "wait_cooldown": "Gift {title} has not been transferred yet. Please try again.\n\nYou can confirm in {minutes}m {seconds}s.",
     },
     
     "zh": {
@@ -131,12 +129,11 @@ TRANSLATIONS = {
         "subscribed_ok": "✅ 太好了！",
         
         # 转账确认
-        "seller_confirmed": "您确认准备转让 {title}。\n\n等待买家确认。",
-        "buyer_confirmed": "礼物 {title} 成功交付给买家。",
+        "seller_confirmed": "转账已确认，等待买家确认。",
+        "buyer_confirmed": "礼物 {title} 成功转给买家！\n\n预计 {amount} 将在 60 分钟内入账。",
         "already_confirmed": "您已确认。",
-        "seller_not_confirmed": "卖家尚未确认在其账户上收到礼物 {title}。买家确认转账后重试。",
+        "seller_not_confirmed": "卖家尚未确认在其账户上收到礼物 {title}。卖家确认转账后重试。",
         "transfer_already_confirmed": "转账已确认。",
-        "wait_cooldown": "礼物 {title} 尚未转移。请重试。\n\n您可以在 {minutes}分 {seconds}秒后确认。",
     },
     
     "ar": {
@@ -176,12 +173,11 @@ TRANSLATIONS = {
         "subscribed_ok": "✅ رائع!",
         
         # تأكيد التحويل
-        "seller_confirmed": "لقد أكدت الاستعداد لنقل {title}.\n\nفي انتظار تأكيد المشتري.",
-        "buyer_confirmed": "تم تسليم الهدية {title} بنجاح إلى المشتري.",
+        "seller_confirmed": "تم تأكيد التحويل، في انتظار تأكيد المشتري.",
+        "buyer_confirmed": "تم نقل الهدية {title} بنجاح إلى المشتري!\n\nتوقع إضافة {amount} خلال 60 دقيقة.",
         "already_confirmed": "لقد أكدت بالفعل.",
-        "seller_not_confirmed": "لم يؤكد البائع استلام الهدية {title} على حسابه. حاول مرة أخرى بعد أن يؤكد المشتري التحويل.",
+        "seller_not_confirmed": "لم يؤكد البائع استلام الهدية {title} على حسابه. حاول مرة أخرى بعد أن يؤكد البائع التحويل.",
         "transfer_already_confirmed": "تم تأكيد التحويل بالفعل.",
-        "wait_cooldown": "لم يتم نقل الهدية {title} بعد. حاول مرة أخرى.\n\nيمكنك التأكيد في {minutes}د {seconds}ث.",
     }
 }
 

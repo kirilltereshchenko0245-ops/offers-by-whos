@@ -941,6 +941,7 @@ async def offer_callback(call: CallbackQuery):
             await call.answer("Этот офер ещё не принят.", show_alert=True); return
         
         title = gift_title(offer["gift_name"], offer["gift_number"])
+        amount = display_amount(offer["amount"], offer["currency"])
         
         # Определяем кто нажал кнопку - продавец (seller/кто кинул офер) или покупатель (buyer/кто принял)
         is_seller = call.from_user and call.from_user.id == offer["seller_id"]
@@ -950,51 +951,34 @@ async def offer_callback(call: CallbackQuery):
             await call.answer("Это не ваш офер.", show_alert=True)
             return
         
-        # Шаг 1: Покупатель (тот кто ПРИНЯЛ офер) подтверждает первым что ПОЛУЧИЛ подарок
-        if is_buyer:
-            if offer["buyer_confirmed"]:
+        # Шаг 1: Продавец (тот кто СОЗДАЛ офер) подтверждает ПЕРВЫМ что готов передать
+        if is_seller:
+            if offer["seller_confirmed"]:
                 await call.answer(t("already_confirmed", offer["locale"]), show_alert=True)
                 return
             
-            # Проверка кулдауна 4 минуты для покупателя
-            if offer["accepted_at"]:
-                accepted_time = datetime.fromisoformat(offer["accepted_at"])
-                if accepted_time.tzinfo is None:
-                    accepted_time = accepted_time.replace(tzinfo=timezone.utc)
-                now = datetime.now(timezone.utc)
-                time_passed = (now - accepted_time).total_seconds()
-                cooldown_seconds = 4 * 60  # 4 минуты
-                
-                if time_passed < cooldown_seconds:
-                    remaining = int(cooldown_seconds - time_passed)
-                    minutes = remaining // 60
-                    seconds = remaining % 60
-                    
-                    message = t("wait_cooldown", offer["locale"], title=title, minutes=minutes, seconds=seconds)
-                    await call.answer(message, show_alert=True)
-                    return
+            # Продавец подтверждает (БЕЗ кулдауна)
+            db.confirm_seller(offer_id)
             
-            # Покупатель подтверждает получение
-            db.confirm_buyer(offer_id)
-            
-            message = t("seller_confirmed", offer["locale"], title=title)
+            message = t("seller_confirmed", offer["locale"])
             await call.answer(message, show_alert=True)
             return
         
-        # Шаг 2: Продавец (тот кто КИНУЛ офер) подтверждает вторым что ДОСТАВИЛ подарок
-        if is_seller:
-            if not offer["buyer_confirmed"]:
+        # Шаг 2: Покупатель (тот кто ПРИНЯЛ офер) подтверждает ВТОРЫМ что получил подарок
+        if is_buyer:
+            # Проверяем что продавец уже подтвердил
+            if not offer["seller_confirmed"]:
                 await call.answer(t("seller_not_confirmed", offer["locale"], title=title), show_alert=True)
                 return
             
-            if offer["seller_confirmed"]:
+            if offer["buyer_confirmed"]:
                 await call.answer(t("transfer_already_confirmed", offer["locale"]), show_alert=True)
                 return
             
-            # Продавец подтверждает доставку (БЕЗ кулдауна)
-            db.confirm_seller(offer_id)
+            # Покупатель подтверждает получение (БЕЗ кулдауна)
+            db.confirm_buyer(offer_id)
             
-            message = t("buyer_confirmed", offer["locale"], title=title)
+            message = t("buyer_confirmed", offer["locale"], title=title, amount=amount)
             await call.answer(message, show_alert=True)
             return
         
