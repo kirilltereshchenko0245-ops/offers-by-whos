@@ -284,7 +284,7 @@ async def process_offer(message: Message, business_connection_id: str | None = N
     transfer_url = (f"tg://send_gift?to={transfer_username.lstrip('@')}" if transfer_username else f"tg://user?id={seller_id}")
     now = datetime.now(timezone.utc)
     expires = make_expiry(now, cfg.offer_expire_hours)
-    data = dict(seller_id=seller_id, seller_username=seller_username, buyer_id=buyer_id,
+    data = dict(bot_id=0, seller_id=seller_id, seller_username=seller_username, buyer_id=buyer_id,
                 buyer_username=buyer_username, buyer_url=buyer_url, gift_name=parsed["gift_name"],
                 gift_number=parsed["gift_number"], gift_url=parsed["gift_url"], amount=parsed["amount"],
                 currency=parsed["currency"], locale=parsed["locale"], status="pending",

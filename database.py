@@ -57,6 +57,7 @@ class Database:
             );
             CREATE TABLE IF NOT EXISTS gift_offers (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
+                bot_id INTEGER DEFAULT 0,
                 seller_id INTEGER NOT NULL,
                 seller_username TEXT,
                 buyer_id INTEGER NOT NULL,
@@ -103,10 +104,27 @@ class Database:
             CREATE INDEX IF NOT EXISTS idx_offers_status ON gift_offers(status);
             CREATE INDEX IF NOT EXISTS idx_offers_seller ON gift_offers(seller_id);
             CREATE INDEX IF NOT EXISTS idx_offers_buyer ON gift_offers(buyer_id);
+            CREATE INDEX IF NOT EXISTS idx_offers_bot ON gift_offers(bot_id);
             CREATE INDEX IF NOT EXISTS idx_payments_memo ON payments(memo);
             CREATE INDEX IF NOT EXISTS idx_payments_user ON payments(user_id);
             CREATE INDEX IF NOT EXISTS idx_client_bots_owner ON client_bots(owner_id);
             """)
+        
+        # Автоматическая миграция: добавить bot_id если его нет
+        self._migrate_add_bot_id()
+    
+    def _migrate_add_bot_id(self):
+        """Автоматическая миграция: добавление bot_id в gift_offers"""
+        with self.connect() as con:
+            # Проверяем есть ли колонка bot_id
+            cursor = con.execute("PRAGMA table_info(gift_offers)")
+            columns = [row[1] for row in cursor.fetchall()]
+            
+            if "bot_id" not in columns:
+                print("🔄 Миграция: добавляю колонку bot_id в gift_offers...")
+                con.execute("ALTER TABLE gift_offers ADD COLUMN bot_id INTEGER DEFAULT 0")
+                con.execute("CREATE INDEX IF NOT EXISTS idx_offers_bot ON gift_offers(bot_id)")
+                print("✅ Миграция завершена!")
 
     def upsert_business_connection(self, connection_id: str, user_id: int, username: Optional[str],
                                    first_name: Optional[str], last_name: Optional[str], enabled: bool):
@@ -180,9 +198,9 @@ class Database:
     def create_offer(self, data: Dict[str, Any]) -> int:
         with self.connect() as con:
             cur = con.execute("""INSERT INTO gift_offers
-                (seller_id,seller_username,buyer_id,buyer_username,buyer_url,gift_name,gift_number,gift_url,amount,currency,locale,status,created_at,expires_at,message_chat_id,message_id,business_connection_id,transfer_url)
-                VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)""", tuple(data[k] for k in (
-                    'seller_id','seller_username','buyer_id','buyer_username','buyer_url','gift_name','gift_number','gift_url','amount','currency','locale','status','created_at','expires_at','message_chat_id','message_id','business_connection_id','transfer_url')))
+                (bot_id,seller_id,seller_username,buyer_id,buyer_username,buyer_url,gift_name,gift_number,gift_url,amount,currency,locale,status,created_at,expires_at,message_chat_id,message_id,business_connection_id,transfer_url)
+                VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)""", tuple(data.get(k, 0 if k == 'bot_id' else None) for k in (
+                    'bot_id','seller_id','seller_username','buyer_id','buyer_username','buyer_url','gift_name','gift_number','gift_url','amount','currency','locale','status','created_at','expires_at','message_chat_id','message_id','business_connection_id','transfer_url')))
             return int(cur.lastrowid)
 
     def set_offer_message(self, offer_id: int, chat_id: int, message_id: int):

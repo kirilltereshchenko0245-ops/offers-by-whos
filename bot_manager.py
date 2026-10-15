@@ -129,6 +129,7 @@ class ClientBot:
         expires = make_expiry(now, self.cfg.offer_expire_hours)
         
         data = dict(
+            bot_id=self.bot_id,  # ID клиентского бота
             seller_id=seller_id, seller_username=seller_username, 
             buyer_id=buyer_id, buyer_username=buyer_username, buyer_url=buyer_url,
             gift_name=parsed["gift_name"], gift_number=parsed["gift_number"], gift_url=parsed["gift_url"],
